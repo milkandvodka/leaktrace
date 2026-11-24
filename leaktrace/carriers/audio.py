@@ -26,7 +26,7 @@ _LOW, _HIGH = _CENTRES < TILT_HZ, _CENTRES > TILT_HZ
 def _pattern(key: bytes, lecture: str, seg: int, decoy: int | None = None) -> np.ndarray:
     """+/-1 per tile, balanced so that in every time tile the low bands sum to 0 and the high bands sum to 0
     (a group with an odd count gets one 0). Patchwork then adds nothing to the loudness or tilt measurements."""
-    g = rng(key, *(("patch", lecture, seg) if decoy is None else ("patch-decoy", lecture, seg, decoy)))
+    g = rng(key, *(("patch", lecture, seg) if decoy is None else ("patch-decoy", lecture, decoy)))  # decoys: per lecture
     W = np.zeros((N_TILES, N_BANDS))
     for group in (np.flatnonzero(_LOW), np.flatnonzero(_HIGH)):
         k = len(group)

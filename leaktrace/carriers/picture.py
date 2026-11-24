@@ -28,7 +28,9 @@ _REF = 64  # patterns are normalised on a fixed 64x64 grid, so every resolution 
 
 
 def _params(key: bytes, name: str, lecture: str, seg: int, decoy: int | None):
-    g = rng(key, "pic", name, lecture, seg) if decoy is None else rng(key, "pic-decoy", name, lecture, seg, decoy)
+    # Decoys only need to be independent of the real marks, so one set serves every segment of a lecture
+    # (generated once per trace instead of per segment).
+    g = rng(key, "pic", name, lecture, seg) if decoy is None else rng(key, "pic-decoy", name, lecture, decoy)
     return (g.integers(1, 7, TERMS), g.integers(1, 7, TERMS), g.uniform(0, 2 * np.pi, TERMS),
             g.uniform(0, 2 * np.pi, TERMS), g.choice([-1.0, 1.0], TERMS))
 
@@ -218,7 +220,7 @@ def measure(leak: list[np.ndarray], mezz: list[np.ndarray], t_fracs: list[float]
     }
 
     def pat(name, decoy=None):
-        return pattern(key, name, lecture, seg, decoy, ANALYSIS_W, ANALYSIS_H, box).ravel()[keep]
+        return pattern(key, name, lecture, seg if decoy is None else -1, decoy, ANALYSIS_W, ANALYSIS_H, box).ravel()[keep]
 
     def pats(carrier, decoy=None):
         return (pat("tint_u", decoy), pat("tint_v", decoy)) if carrier == "tint" else (pat(carrier, decoy),)

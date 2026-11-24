@@ -9,8 +9,10 @@
 4. Score every candidate (students who opened the lecture before the leak was first seen) with the Tardos
    score against simulated innocents; report a verdict only as strong as the family-wise bound allows.
 """
+import os
 import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -31,6 +33,7 @@ from .store import Store, now
 AUDIO_SR = 8000             # everything audio is read in the phone band
 FRAME_STEP = 2              # picture: every 2nd frame of a segment (24 of 48)
 QUICK_SEGMENTS = 240        # long leaks: an evenly spread first pass before reading everything
+PICTURE_WORKERS = min(6, os.cpu_count() or 2)
 
 
 @dataclass
@@ -142,16 +145,26 @@ def _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_sp
         if all(f is not None for f in leak_frames + mezz_frames):
             mid = len(ks) // 2
             reg = pcar.register(pcar.gray_small(leak_frames[mid]), pcar.gray_small(mezz_frames[mid]))
-            reg = reg or state.get("reg")
+            reg = reg or state.get("reg")  # registration stays in order: a failed frame reuses the last geometry
             if reg is not None:
                 state["reg"] = reg
                 H, valid = reg
-                la = [pcar.warp(pcar.to_analysis(f), H) for f in leak_frames]
-                ma = [pcar.to_analysis(f) for f in mezz_frames]
-                got = pcar.measure(la, ma, list((ks + 0.5) / SEG_FRAMES), valid, key, meta.id, i, box)
-                for name, (est, se) in got.items():
-                    z[CARRIERS.index(name)] = est / se if np.isfinite(se) else 0.0
-    return z
+                t_fracs = list((ks + 0.5) / SEG_FRAMES)
+                return z, lambda: _picture(leak_frames, mezz_frames, H, valid, t_fracs, key, meta.id, i, box)
+    return z, None
+
+
+def _picture(leak_frames, mezz_frames, H, valid, t_fracs, key, lecture, seg, box) -> dict:
+    """The picture carriers of one segment; runs on a worker thread (numpy and OpenCV release the GIL)."""
+    la = [pcar.warp(pcar.to_analysis(f), H) for f in leak_frames]
+    ma = [pcar.to_analysis(f) for f in mezz_frames]
+    return pcar.measure(la, ma, t_fracs, valid, key, lecture, seg, box)
+
+
+def _collect(pending: deque, z_rows: dict) -> None:
+    i, fut = pending.popleft()
+    for name, (est, se) in fut.result().items():
+        z_rows[i][CARRIERS.index(name)] = est / se if np.isfinite(se) else 0.0
 
 
 def _lecture_folders() -> list[Path]:
@@ -196,13 +209,21 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
         lf = _Frames(media.frames(leak, WIDTH, HEIGHT, FPS)) if has_video else None
         mf = _Frames(media.frames(mezz, WIDTH, HEIGHT, FPS)) if has_video else None
         state: dict = {}
+        pending: deque = deque()
         try:
-            for i in pass_segs:
-                z_rows[i] = _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_spec, lf, mf,
-                                             tuple(meta.box), has_audio, has_video, state)
-                done += 1
-                if progress:
-                    progress(0.95 * done / len(segs))
+            with ThreadPoolExecutor(max_workers=PICTURE_WORKERS) as workers:
+                for i in pass_segs:
+                    z_rows[i], job = _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_spec,
+                                                      lf, mf, tuple(meta.box), has_audio, has_video, state)
+                    if job:
+                        pending.append((i, workers.submit(job)))
+                    while len(pending) > 2 * PICTURE_WORKERS:  # bound the frames held in memory
+                        _collect(pending, z_rows)
+                    done += 1
+                    if progress:
+                        progress(0.95 * done / len(segs))
+                while pending:
+                    _collect(pending, z_rows)
         finally:
             if lf:
                 lf.close()
