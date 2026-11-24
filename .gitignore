@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.superpowers/
+# secrets: every .env file at any depth, except the template
+.env
+.env.*
+!.env.example
+# media and runtime data (lectures, renditions, bench results)
+var/
+*.mp4
+*.ts
+*.wav
+*.3gp
+*.m4a
+!tests/fixtures/**
+frontend/node_modules/
+frontend/dist/
