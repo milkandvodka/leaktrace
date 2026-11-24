@@ -63,26 +63,63 @@ def _planes(yuv: np.ndarray):
     return (yuv[:h], yuv[h: h + h // 4].reshape(h // 2, w // 2), yuv[h + h // 4:].reshape(h // 2, w // 2))
 
 
+@lru_cache(maxsize=64)
+def _gains(key: bytes, lecture: str, seg: int, box: tuple[int, int, int, int]):
+    """Each carrier's per-pixel strength for one segment: brightness and contrast on the luma grid; saturation,
+    hue and tint on the chroma grid. Computed once per segment, used for every frame."""
+    lp = lambda n: pattern(key, n, lecture, seg, None, WIDTH, HEIGHT, box)  # noqa: E731
+    cp = lambda n: pattern(key, n, lecture, seg, None, WIDTH // 2, HEIGHT // 2, box)  # noqa: E731
+    return (BUDGET.brightness * lp("brightness"), BUDGET.contrast * lp("contrast"), BUDGET.saturation * cp("saturation"),
+            np.float32(np.deg2rad(BUDGET.hue_deg)) * cp("hue"), BUDGET.tint * cp("tint_u"), BUDGET.tint * cp("tint_v"))
+
+
+def prepare(box, key: bytes, lecture: str, seg: int) -> None:
+    """Compute a segment's patterns ahead of marking its frames in parallel."""
+    _gains(key, lecture, seg, tuple(int(v) for v in box))
+
+
+def delta(yuv: np.ndarray, t_frac: float, box, key: bytes, lecture: str, seg: int) -> np.ndarray | None:
+    """The change rendition A applies to this frame (B applies the opposite), as a float32 array shaped like the
+    frame; None at a point in the segment where the temporal code is zero. Saturation and hue are linearised: with
+    at most 3 % and 1.5 degrees the dropped second-order terms are below 0.05 code values."""
+    s = np.float32(code(t_frac))
+    if s == 0:
+        return None
+    kb, kc, ks, kh, ku, kv = _gains(key, lecture, seg, tuple(int(v) for v in box))
+    Y, U, V = _planes(yuv)
+    h, w = HEIGHT, WIDTH
+    d = np.empty(yuv.shape, np.float32)
+    dY, dU, dV = d[:h], d[h: h + h // 4].reshape(h // 2, w // 2), d[h + h // 4:].reshape(h // 2, w // 2)
+    np.subtract(Y, np.float32(128), out=dY, dtype=np.float32)  # in place: a frame is 1.4 M values
+    dY *= kc
+    dY += kb
+    dY *= s
+    np.clip(dY, -MAX_DY, MAX_DY, out=dY)
+    uc = np.subtract(U, np.float32(128), dtype=np.float32)
+    vc = np.subtract(V, np.float32(128), dtype=np.float32)
+    np.multiply(ks, uc, out=dU)
+    dU -= kh * vc
+    dU += ku
+    dU *= s
+    np.multiply(ks, vc, out=dV)
+    dV += kh * uc
+    dV += kv
+    dV *= s
+    return d
+
+
+def apply(yuv: np.ndarray, d: np.ndarray | None, sign: int) -> np.ndarray:
+    """Frame + d (A) or frame - d (B), rounded and saturated to 0..255 in one vectorised pass."""
+    if d is None:
+        return yuv.copy()
+    op = cv2.add if sign > 0 else cv2.subtract
+    return op(yuv, d, dtype=cv2.CV_8U)
+
+
 def embed(yuv: np.ndarray, t_frac: float, box, key: bytes, lecture: str, seg: int, sign: int) -> np.ndarray:
     """One frame (YUV420, WIDTH x HEIGHT) at position t_frac (0..1) inside segment `seg`, marked for rendition
     A (sign +1) or B (sign -1). Returns a new array."""
-    s = sign * float(code(t_frac))
-    if s == 0:
-        return yuv.copy()
-    box = tuple(int(v) for v in box)
-    Y, U, V = (p.astype(np.float32) for p in _planes(yuv))
-    lp = lambda n: pattern(key, n, lecture, seg, None, WIDTH, HEIGHT, box)  # noqa: E731
-    cp = lambda n: pattern(key, n, lecture, seg, None, WIDTH // 2, HEIGHT // 2, box)  # noqa: E731
-    dY = s * (BUDGET.brightness * lp("brightness") + BUDGET.contrast * lp("contrast") * (Y - 128))
-    Y2 = Y + np.clip(dY, -MAX_DY, MAX_DY)
-    Uc, Vc = U - 128, V - 128
-    gain = 1 + s * BUDGET.saturation * cp("saturation")
-    theta = s * np.deg2rad(BUDGET.hue_deg) * cp("hue")
-    c, sn = np.cos(theta), np.sin(theta)
-    U2 = gain * (Uc * c - Vc * sn) + 128 + s * BUDGET.tint * cp("tint_u")
-    V2 = gain * (Uc * sn + Vc * c) + 128 + s * BUDGET.tint * cp("tint_v")
-    out = np.concatenate([Y2.ravel(), U2.ravel(), V2.ravel()])
-    return np.clip(np.round(out), 0, 255).astype(np.uint8).reshape(yuv.shape)
+    return apply(yuv, delta(yuv, t_frac, box, key, lecture, seg), sign)
 
 
 def to_analysis(yuv: np.ndarray) -> np.ndarray:

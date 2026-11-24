@@ -3,8 +3,10 @@
 Everything streams: frames come one at a time from an ffmpeg pipe, so a lecture never sits in memory.
 """
 import json
+import queue
 import subprocess
 import tempfile
+import threading
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +116,31 @@ def audio(path: Path, sr: int = SR, start: float = 0.0, dur: float | None = None
     return x
 
 
+class AudioReader:
+    """Mono float32 audio read front to back through one ffmpeg pipe (no whole-lecture buffer).
+    Gives silence when the file has no audio track, and zero-pads past the end."""
+
+    def __init__(self, path: Path, sr: int = SR):
+        self._proc = None
+        if probe(path).has_audio:
+            self._proc = subprocess.Popen([tool("ffmpeg"), "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1",
+                                           "-ar", str(sr), "-f", "f32le", "-"],
+                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def read(self, n: int) -> np.ndarray:
+        if self._proc is None or n <= 0:
+            return np.zeros(max(n, 0), np.float32)
+        x = np.frombuffer(self._proc.stdout.read(4 * n), np.float32)
+        return np.pad(x, (0, n - len(x))) if len(x) < n else x.copy()
+
+    def close(self) -> None:
+        if self._proc:
+            self._proc.stdout.close()
+            if self._proc.poll() is None:
+                self._proc.kill()
+            self._proc.wait()
+
+
 class Encoder:
     """One rendition as HLS: 1.92 s TS segments named 00000.ts... and index.m3u8.
 
@@ -141,14 +168,35 @@ class Encoder:
             self._wav.setnchannels(1)
             self._wav.setsampwidth(2)
             self._wav.setframerate(SR)
+        # Frames go through a queue to a writer thread, so marking and both encoders run side by side instead of
+        # waiting on each other through small OS pipe buffers.
+        self._queue: queue.Queue = queue.Queue(maxsize=96)
+        self._writer_error: BaseException | None = None
+        self._writer = threading.Thread(target=self._drain, daemon=True)
+        self._writer.start()
+
+    def _drain(self) -> None:
+        while (buf := self._queue.get()) is not None:
+            if self._writer_error is None:
+                try:
+                    self._proc.stdin.write(buf)
+                except BaseException as e:  # encoder died; surfaced on close
+                    self._writer_error = e
 
     def write_frame(self, yuv: np.ndarray) -> None:
-        self._proc.stdin.write(np.ascontiguousarray(yuv, np.uint8).tobytes())
+        if self._writer_error:
+            raise MediaError(f"encoder stopped: {self._writer_error}")
+        self._queue.put(np.ascontiguousarray(yuv, np.uint8).tobytes())
 
     def write_audio(self, pcm: np.ndarray) -> None:
         self._wav.writeframes((np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes())
 
+    def _stop_writer(self) -> None:
+        self._queue.put(None)
+        self._writer.join()
+
     def close(self) -> None:
+        self._stop_writer()
         self._proc.stdin.close()
         if self._proc.wait():
             self._err.seek(0)
@@ -166,6 +214,8 @@ class Encoder:
     def abort(self) -> None:
         if self._proc.poll() is None:
             self._proc.kill()
+        self._writer_error = self._writer_error or MediaError("aborted")
+        self._stop_writer()
         self._proc.wait()
         if self._wav:
             self._wav.close()
