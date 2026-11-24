@@ -18,6 +18,8 @@ from .ingest import LectureMeta
 # A 0.02 grid from 0.75x to 2x, plus the speeds players actually offer; the best is then refined in 0.005 steps.
 SPEEDS = np.array(sorted(set(np.round(np.arange(0.76, 2.0001, 0.02), 2)) | {0.75, 1.25, 1.75}))
 MIN_VOTES = 12
+MAX_PLACES = 3   # places a clip may match about equally well (a lecture repeating itself)
+TIE = 0.75       # 'about equally': votes within this fraction of the best
 
 
 @dataclass
@@ -47,29 +49,48 @@ def _covered(meta: LectureMeta, offset: float, speed: float, duration: float) ->
     return list(range(first, last))
 
 
-def _by_audio(leak: Path, lectures: list[Path], duration: float):
+def _by_audio(leak: Path, lectures: list[Path], duration: float) -> list[Location]:
+    """Every place the clip's sound matches about equally well (a lecture can repeat itself: a recap, a shared
+    intro), best first; empty when nothing stands out."""
     t, f = index.peaks(media.audio(leak, FP_SR))
     if len(t) < 20:
-        return None
+        return []
     best = _vote(t, f, lectures, SPEEDS)
     if best is not None:  # refine the speed around the winner
-        best = _vote(t, f, [best[2]], np.round(best[3] + np.arange(-0.015, 0.0151, 0.005), 3), best)
-    # Well above noise, and clearly the best place. A lecture that genuinely repeats itself (a recap, a looped
-    # intro) gives a real second peak; the wrong one of the two would only read noise later, never accuse.
-    if best is None or best[0] < MIN_VOTES or best[0] < 1.5 * best[1]:
-        return None
-    votes, _runner, folder, scale, q_t, m_t = best
-    if len(np.unique(q_t)) >= 3:  # refit speed and offset on the consistent matches
-        b, a = np.polyfit(q_t.astype(float), m_t.astype(float), 1)
-    else:
-        b, a = scale, float(np.median(m_t - q_t * scale))
+        best = _vote(t, f, [best[1]], np.round(best[2] + np.arange(-0.015, 0.0151, 0.005), 3), best)
+    if best is None:
+        return []
+    votes, folder, scale, offs, base, hist, q_t, m_t = best
+    peaks, h = [], hist.copy()
+    for _ in range(MAX_PLACES + 1):
+        k = int(np.argmax(h))
+        if h[k] == 0:
+            break
+        peaks.append((int(h[k]), k))
+        h[max(0, k - 3): k + 4] = 0
+    places = [pk for pk in peaks[:MAX_PLACES] if pk[0] >= TIE * peaks[0][0]]
+    rest = peaks[len(places)][0] if len(peaks) > len(places) else 0
+    # Well above noise, and clearly above every place that isn't a near-tie. A foreign clip has many similar
+    # small peaks, so it fails this; a genuine repeat gives a few tall ones, and trace reads each.
+    if votes < MIN_VOTES or votes < 1.5 * rest:
+        return []
     meta = LectureMeta.load(folder)
-    offset, speed = a * index.FRAME_S, float(b)
-    return Location(meta.id, offset, speed, votes, "audio", duration, _covered(meta, offset, speed, duration))
+    out = []
+    for v, k in places:
+        inl = np.abs(offs - (k + base)) <= 2
+        qi, mi = q_t[inl], m_t[inl]
+        if len(np.unique(qi)) >= 3:  # refit speed and offset on the consistent matches
+            b, a = np.polyfit(qi.astype(float), mi.astype(float), 1)
+        else:
+            b, a = scale, float(np.median(mi - qi * scale))
+        offset, speed = a * index.FRAME_S, float(b)
+        out.append(Location(meta.id, offset, speed, v, "audio", duration, _covered(meta, offset, speed, duration)))
+    return out
 
 
 def _vote(t, f, lectures, speeds, best=None):
-    """The (votes, runner-up votes, lecture, speed, clip frames, master frames) with the most consistent hits."""
+    """(votes, lecture, speed, offsets, offset base, offset histogram, clip frames, master frames) for the
+    lecture and speed with the most consistent hits."""
     for scale in speeds:
         qh, qt = index.pairs(t, f, scale)
         if not len(qh):
@@ -87,14 +108,9 @@ def _vote(t, f, lectures, speeds, best=None):
             offs = T[starts] - np.repeat(q_master, counts)
             base = offs.min()
             hist = np.convolve(np.bincount(offs - base), [1, 1, 1], "same")
-            k = int(np.argmax(hist))
-            votes = int(hist[k])
+            votes = int(hist.max())
             if best is None or votes > best[0]:
-                rest = hist.copy()
-                rest[max(0, k - 3): k + 4] = 0
-                inl = np.abs(offs - (k + base)) <= 2
-                best = (votes, int(rest.max(initial=0)), folder, float(scale),
-                        np.repeat(qt, counts)[inl], T[starts][inl])
+                best = (votes, folder, float(scale), offs, base, hist, np.repeat(qt, counts), T[starts])
     return best
 
 
@@ -190,11 +206,19 @@ def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, durat
     return best if best_score > 0.3 else rough
 
 
-def locate(leak: Path, lectures: list[Path]) -> Location | None:
-    """Find the clip among the packaged lectures (folders with fp.npz / kf.npz), or None if it isn't one."""
+def locate_all(leak: Path, lectures: list[Path]) -> list[Location]:
+    """Every place in the packaged lectures (folders with fp.npz / kf.npz) the clip matches about equally well,
+    best first; empty if it isn't one of them."""
     lectures = [Path(f) for f in lectures if (Path(f) / "fp.npz").exists()]
     p = media.probe(leak)
-    loc = _by_audio(leak, lectures, p.duration) if p.has_audio else None
-    if loc is None and p.has_video:
+    locs = _by_audio(leak, lectures, p.duration) if p.has_audio else []
+    if not locs and p.has_video:
         loc = _by_video(leak, lectures, p.duration)
-    return loc
+        locs = [loc] if loc else []
+    return locs
+
+
+def locate(leak: Path, lectures: list[Path]) -> Location | None:
+    """The best place the clip matches, or None if it isn't one of the lectures."""
+    locs = locate_all(leak, lectures)
+    return locs[0] if locs else None

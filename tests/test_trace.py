@@ -88,3 +88,30 @@ def test_muted_export_traced_by_picture(lec150, tmp_path):
     r = trace(muted, lec150)
     assert r.suspects[0]["student"] == LEAKER and r.verdict in ("narrowed", "identified"), (r.verdict, r.suspects[:3])
     assert r.carriers["timing"]["weight"] == 0 or r.carriers["timing"]["mean_z"] == 0
+
+
+@pytest.fixture(scope="module")
+def rep80(lec150, lecture_40s):
+    """A lecture that repeats itself (a recap, a shared intro): the 40 s lecture played twice, in lec150's library."""
+    import os
+    from pathlib import Path
+    from leaktrace.ingest import ingest
+    data = Path(os.environ["LEAKTRACE_DATA"])
+    if not (data / "lectures" / "rep80" / "meta.json").exists():
+        master = CACHE / "lecture_40s_twice.mp4"
+        if not master.exists():
+            media.run(["-stream_loop", "1", "-i", lecture_40s, "-c:v", "libx264", "-preset", "veryfast", "-crf", "16",
+                       "-c:a", "aac", master])
+        ingest(master, "rep80", "Recap", preset="veryfast")
+    return lec150
+
+
+@pytest.mark.slow
+def test_clip_of_a_repeated_passage_is_read_at_the_right_copy(rep80, tmp_path):
+    clip = tmp_path / "clip.mp4"
+    media.run(["-ss", "44", "-i", deliver.export("rep80", LEAKER), "-t", "34", "-c:v", "libx264", "-preset", "veryfast",
+               "-c:a", "aac", clip])
+    r = trace(clip, rep80, candidates=STUDENTS)
+    assert r.location is not None, r.verdict  # the passage plays at 4 s and at 44 s: both match equally
+    assert r.location["offset"] == pytest.approx(44, abs=0.15)
+    assert r.suspects[0]["student"] == LEAKER, r.suspects[:3]

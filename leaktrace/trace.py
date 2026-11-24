@@ -27,11 +27,12 @@ from .codes import accuse
 from .config import FPS, HEIGHT, SEG_FRAMES, SEG_SECONDS, WIDTH, settings
 from .fuse import CARRIERS, fuse
 from .ingest import MARGIN, LectureMeta
-from .locate import Location, locate
+from .locate import Location, locate_all
 from .store import Store, now
 
 AUDIO_SR = 8000             # everything audio is read in the phone band
 FRAME_STEP = 2              # picture: every 2nd frame of a segment (24 of 48)
+PROBE_SEGMENTS = 8          # read at each place a repeated passage matches, to find the true one
 QUICK_SEGMENTS = 240        # long leaks: an evenly spread first pass before reading everything
 PICTURE_WORKERS = min(6, os.cpu_count() or 2)
 
@@ -172,30 +173,74 @@ def _lecture_folders() -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_dir() and not p.name.endswith(".partial")) if root.exists() else []
 
 
+def _read(leak: Path, meta: LectureMeta, loc: Location, key: bytes, segs: list[int], audio_feats: tuple,
+          has_audio: bool, has_video: bool, z_rows: dict, tick: Callable[[], None]) -> None:
+    """Measure every carrier on the given segments of the leak, read at this location, into z_rows."""
+    mezz = settings().data / "lectures" / meta.id / "mezzanine.mp4"
+    lf = _Frames(media.frames(leak, WIDTH, HEIGHT, FPS)) if has_video else None
+    mf = _Frames(media.frames(mezz, WIDTH, HEIGHT, FPS)) if has_video else None
+    state: dict = {}
+    pending: deque = deque()
+    try:
+        with ThreadPoolExecutor(max_workers=PICTURE_WORKERS) as workers:
+            for i in segs:
+                z_rows[i], job = _measure_segment(i, meta, loc, key, *audio_feats, lf, mf, tuple(meta.box),
+                                                  has_audio, has_video, state)
+                if job:
+                    pending.append((i, workers.submit(job)))
+                while len(pending) > 2 * PICTURE_WORKERS:  # bound the frames held in memory
+                    _collect(pending, z_rows)
+                tick()
+            while pending:
+                _collect(pending, z_rows)
+    finally:
+        if lf:
+            lf.close()
+            mf.close()
+
+
 def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: list[str] | None = None,
           progress: Callable[[float], None] | None = None) -> TraceReport:
     leak = Path(leak)
     report = TraceReport(id=uuid.uuid4().hex[:12], leak=leak.name, created=now(), verdict="not_ours")
-    loc = locate(leak, _lecture_folders())
-    if loc is None or not loc.segments:
+    locs = [l for l in locate_all(leak, _lecture_folders()) if l.segments]
+    if not locs:
         store.add_trace(report.id, None, report.verdict, report.as_dict())
         return report
-    folder = settings().data / "lectures" / loc.lecture_id
-    meta = LectureMeta.load(folder)
+    meta = LectureMeta.load(settings().data / "lectures" / locs[0].lecture_id)
     key = settings().secret
     report.lecture = {"id": meta.id, "title": meta.title}
-    report.location = loc.as_dict()
 
     p = media.probe(leak)
     has_audio, has_video = p.has_audio, p.has_video
-    mezz = folder / "mezzanine.mp4"
-    leak_feat = mezz_feat = leak_spec = mezz_spec = None
+    feats = (None, None, None, None)
     if has_audio and meta.has_audio:
-        leak_audio, mezz_audio = media.audio(leak, AUDIO_SR), media.audio(mezz, AUDIO_SR)
-        leak_feat, mezz_feat = tcar.features(leak_audio, AUDIO_SR), tcar.features(mezz_audio, AUDIO_SR)
-        leak_spec, mezz_spec = acar.spec(leak_audio, AUDIO_SR), acar.spec(mezz_audio, AUDIO_SR)
+        leak_audio, mezz_audio = media.audio(leak, AUDIO_SR), media.audio(settings().data / "lectures" / meta.id / "mezzanine.mp4", AUDIO_SR)
+        feats = (tcar.features(leak_audio, AUDIO_SR), tcar.features(mezz_audio, AUDIO_SR),
+                 acar.spec(leak_audio, AUDIO_SR), acar.spec(mezz_audio, AUDIO_SR))
 
-    segs = loc.segments
+    total = sum(len(l.segments) for l in locs) if len(locs) > 1 else len(locs[0].segments)
+    done = [0]
+
+    def tick():
+        done[0] += 1
+        if progress:
+            progress(0.95 * min(1.0, done[0] / total))
+
+    # The clip matches several places equally (the lecture repeats itself): the marks only read at the true one.
+    z_rows: dict[int, np.ndarray] = {}
+    loc = locs[0]
+    if len(locs) > 1:
+        probes = []
+        for cand in locs:
+            rows: dict = {}
+            _read(leak, meta, cand, key, cand.segments[:PROBE_SEGMENTS], feats, has_audio, has_video, rows, tick)
+            y, _w = fuse(np.stack([rows[s] for s in sorted(rows)]))
+            probes.append((float(np.mean(y ** 2)), cand, rows))
+        _strength, loc, z_rows = max(probes, key=lambda x: x[0])
+    report.location = loc.as_dict()
+
+    segs = [s for s in loc.segments if s not in z_rows]
     order = segs if len(segs) <= QUICK_SEGMENTS else sorted(set(np.linspace(0, len(segs) - 1, QUICK_SEGMENTS).round().astype(int)))
     passes = [sorted(segs[j] for j in order)] if len(segs) > QUICK_SEGMENTS else [segs]
     if len(segs) > QUICK_SEGMENTS:
@@ -203,32 +248,9 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
 
     pool = candidates if candidates is not None else (store.viewers(meta.id, before=first_seen) or store.student_ids())
     report.candidates = len(pool)
-    z_rows: dict[int, np.ndarray] = {}
-    done = 0
     for pass_segs in passes:
-        lf = _Frames(media.frames(leak, WIDTH, HEIGHT, FPS)) if has_video else None
-        mf = _Frames(media.frames(mezz, WIDTH, HEIGHT, FPS)) if has_video else None
-        state: dict = {}
-        pending: deque = deque()
-        try:
-            with ThreadPoolExecutor(max_workers=PICTURE_WORKERS) as workers:
-                for i in pass_segs:
-                    z_rows[i], job = _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_spec,
-                                                      lf, mf, tuple(meta.box), has_audio, has_video, state)
-                    if job:
-                        pending.append((i, workers.submit(job)))
-                    while len(pending) > 2 * PICTURE_WORKERS:  # bound the frames held in memory
-                        _collect(pending, z_rows)
-                    done += 1
-                    if progress:
-                        progress(0.95 * done / len(segs))
-                while pending:
-                    _collect(pending, z_rows)
-        finally:
-            if lf:
-                lf.close()
-                mf.close()
-        if _summarise(report, meta, key, z_rows, pool):
+        _read(leak, meta, loc, key, pass_segs, feats, has_audio, has_video, z_rows, tick)
+        if _summarise(report, meta, key, z_rows, pool, tries=len(locs)):
             break
     store.add_trace(report.id, meta.id, report.verdict, report.as_dict())
     if progress:
@@ -236,7 +258,7 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
     return report
 
 
-def _summarise(report: TraceReport, meta: LectureMeta, key: bytes, z_rows: dict, pool: list[str]) -> bool:
+def _summarise(report: TraceReport, meta: LectureMeta, key: bytes, z_rows: dict, pool: list[str], tries: int = 1) -> bool:
     """Fill the report from the segments read so far; True when the verdict can't get any better."""
     segs = sorted(z_rows)
     Z = np.stack([z_rows[s] for s in segs])
@@ -250,7 +272,7 @@ def _summarise(report: TraceReport, meta: LectureMeta, key: bytes, z_rows: dict,
     if not pool:
         report.verdict, report.suspects = "no_candidates", []
         return False
-    suspects = accuse(key, meta.id, y, pool)
+    suspects = accuse(key, meta.id, y, pool, tries=tries)  # each place tried is one more chance of a fluke
     report.suspects = [s.as_dict() for s in suspects[:10]]
     identified = [s.student for s in suspects if s.verdict == "identified"]
     report.coalition = identified if len(identified) > 1 else []

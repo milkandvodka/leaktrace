@@ -87,8 +87,10 @@ def null_scores(y: np.ndarray, p: np.ndarray, n_null: int = 20_000, chunk: int =
     return np.concatenate(out)
 
 
-def accuse(key: bytes, lecture: str, y: np.ndarray, candidates: list[str], n_null: int = 20_000) -> list[Suspect]:
-    """Every candidate ranked by evidence, with a family-wise false-accusation bound and a verdict."""
+def accuse(key: bytes, lecture: str, y: np.ndarray, candidates: list[str], n_null: int = 20_000,
+           tries: int = 1) -> list[Suspect]:
+    """Every candidate ranked by evidence, with a family-wise false-accusation bound and a verdict. `tries`: how
+    many readings of the leak were looked at to pick this one (the bound is widened by that factor)."""
     y = np.asarray(y, dtype=np.float64)
     seen = np.flatnonzero(y)
     p_all = bias(key, lecture, len(y))
@@ -99,7 +101,7 @@ def accuse(key: bytes, lecture: str, y: np.ndarray, candidates: list[str], n_nul
         return [Suspect(s, 0.0, 1.0, 1.0, "inconclusive") for s in candidates]
     null = null_scores(ys, p, n_null) / energy  # a check on the analytic null; z is reported on its scale
     mu, sd = float(null.mean()), float(null.std()) or 1.0
-    n = len(candidates)
+    n = len(candidates) * max(1, tries)
     out = []
     for s in candidates:
         raw = score(ys, codeword(key, lecture, s, len(y), p_all)[seen], p)
