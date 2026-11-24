@@ -54,7 +54,9 @@ def _by_audio(leak: Path, lectures: list[Path], duration: float):
     best = _vote(t, f, lectures, SPEEDS)
     if best is not None:  # refine the speed around the winner
         best = _vote(t, f, [best[2]], np.round(best[3] + np.arange(-0.015, 0.0151, 0.005), 3), best)
-    if best is None or best[0] < MIN_VOTES or best[0] < 3 * best[1]:
+    # Well above noise, and clearly the best place. A lecture that genuinely repeats itself (a recap, a looped
+    # intro) gives a real second peak; the wrong one of the two would only read noise later, never accuse.
+    if best is None or best[0] < MIN_VOTES or best[0] < 1.5 * best[1]:
         return None
     votes, _runner, folder, scale, q_t, m_t = best
     if len(np.unique(q_t)) >= 3:  # refit speed and offset on the consistent matches

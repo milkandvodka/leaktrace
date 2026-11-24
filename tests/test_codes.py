@@ -62,6 +62,27 @@ def test_interleaved_pair_points_to_a_colluder():
     assert top2[0].p_family < 1e-6
 
 
+def test_chernoff_bound_holds_for_short_codes():
+    """The bound must sit above the real innocent tail even with very few segments (no normal approximation)."""
+    from leaktrace.codes import _weights, chernoff_tail, null_scores
+    m = 20
+    p = bias(KEY, "lec1", m)
+    y = np.random.default_rng(2).uniform(0.3, 1.0, m) * np.random.default_rng(3).choice([-1, 1], m)
+    sims = null_scores(y, p, n_null=400_000)
+    for s in np.quantile(sims, [0.99, 0.999, 0.9999]):
+        assert chernoff_tail(s, y, p) >= np.mean(sims >= s) * 0.9  # an upper bound (allowing sampling noise)
+    leaker = codeword(KEY, "lec1", "s1", m)  # a leak of s1's copy: the observations follow s1's bits
+    y_leak = np.where(leaker, 1.0, -1.0) * np.abs(y)
+    assert chernoff_tail(float(_weights(leaker, p) @ y_leak), y_leak, p) < 0.05
+
+
+def test_one_minute_of_clean_marks_is_not_inconclusive():
+    n = 31  # one minute of 1.92 s segments
+    y = np.where(codeword(KEY, "lec1", "s00042", n), 1.0, -1.0)
+    top = accuse(KEY, "lec1", y, _students(1000))[0]
+    assert top.student == "s00042" and top.verdict in ("narrowed", "identified"), top
+
+
 def test_unobserved_everything_is_inconclusive():
     top = accuse(KEY, "lec1", np.zeros(100), _students(10))[0]
     assert top.verdict == "inconclusive"

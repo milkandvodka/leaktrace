@@ -17,12 +17,12 @@ import math
 from dataclasses import asdict, dataclass
 
 import numpy as np
+from scipy.optimize import minimize_scalar
 from scipy.stats import norm
 
 from .config import BUDGET
 
 IDENTIFIED, NARROWED = 1e-6, 1e-2  # family-wise false-accusation bounds for the verdicts
-MIN_SEGMENTS_FOR_GAUSS = 40  # below this, p-values also have to pass the simulated null (heavier tails)
 
 
 def _rng(key: bytes, *parts: str) -> np.random.Generator:
@@ -62,6 +62,21 @@ class Suspect:
         return asdict(self)
 
 
+def chernoff_tail(s: float, y: np.ndarray, p: np.ndarray) -> float:
+    """A guaranteed upper bound on the chance that an innocent student scores s or more:
+    P(S >= s) <= min over lambda > 0 of exp(-lambda s) * prod_i E[exp(lambda * term_i)], where each term is
+    y_i * sqrt((1-p)/p) with probability p and -y_i * sqrt(p/(1-p)) otherwise. Exact for any number of segments,
+    no normal approximation: this is the number a false accusation is bounded by."""
+    a, b = y * np.sqrt((1 - p) / p), -y * np.sqrt(p / (1 - p))
+    lp, lq = np.log(p), np.log1p(-p)
+
+    def log_bound(lam: float) -> float:
+        return float(-lam * s + np.sum(np.logaddexp(lp + lam * a, lq + lam * b)))
+
+    best = minimize_scalar(log_bound, bounds=(0.0, 60.0), method="bounded", options={"xatol": 1e-4})
+    return float(np.exp(min(0.0, best.fun, log_bound(0.0))))
+
+
 def null_scores(y: np.ndarray, p: np.ndarray, n_null: int = 20_000, chunk: int = 2_000) -> np.ndarray:
     """Scores of simulated innocent students (independent codes with the same biases)."""
     rng = np.random.default_rng(0)
@@ -82,15 +97,15 @@ def accuse(key: bytes, lecture: str, y: np.ndarray, candidates: list[str], n_nul
     energy = math.sqrt(float(np.sum(ys ** 2)))
     if energy == 0 or not candidates:
         return [Suspect(s, 0.0, 1.0, 1.0, "inconclusive") for s in candidates]
-    null = null_scores(ys, p, n_null) / energy
+    null = null_scores(ys, p, n_null) / energy  # a check on the analytic null; z is reported on its scale
     mu, sd = float(null.mean()), float(null.std()) or 1.0
     n = len(candidates)
     out = []
     for s in candidates:
-        z = (score(ys, codeword(key, lecture, s, len(y), p_all)[seen], p) / energy - mu) / sd
-        pv = float(norm.sf(z))
-        if len(seen) < MIN_SEGMENTS_FOR_GAUSS:
-            pv = max(pv, (1 + int(np.sum(null >= z * sd + mu))) / (1 + len(null)))
+        raw = score(ys, codeword(key, lecture, s, len(y), p_all)[seen], p)
+        z = (raw / energy - mu) / sd
+        # Anyone with a real chance of a verdict gets the exact bound; the rest only need a ranking.
+        pv = chernoff_tail(raw, ys, p) if z > 2 else float(norm.sf(z))
         fam = min(1.0, n * pv)
         verdict = "identified" if fam < IDENTIFIED else "narrowed" if fam < NARROWED else "inconclusive"
         out.append(Suspect(s, float(z), pv, fam, verdict))
