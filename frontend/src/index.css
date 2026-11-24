@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #1d1416;
+  --color-body: #33282a;
+  --color-muted: #6d5f62;
+  --color-faint: #a3979a;
+  --color-line: #ece4e5;
+  --color-canvas: #f8f5f5;
+
+  --color-brand-50: #fcedf0;
+  --color-brand-100: #f8d9df;
+  --color-brand-300: #e9909f;
+  --color-brand-500: #c23552;
+  --color-brand-600: #ad2742;
+  --color-brand-700: #9f1d35;
+  --color-brand-800: #7e162a;
+
+  --color-ok-50: #ecf7ef;
+  --color-ok-200: #bfe3c9;
+  --color-ok-700: #23784a;
+  --color-bad-50: #fdedec;
+  --color-bad-200: #f4c5c1;
+  --color-bad-700: #b4372f;
+  --color-warn-50: #fef5e2;
+  --color-warn-200: #f6dea6;
+  --color-warn-700: #8f5b06;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 h-9 text-[14px] font-semibold transition outline-none focus-visible:ring-4 focus-visible:ring-brand-100 disabled:opacity-50 disabled:pointer-events-none;
+}
+@utility btn-primary {
+  @apply btn bg-brand-700 text-white hover:bg-brand-800;
+}
+@utility btn-ghost {
+  @apply btn text-body hover:bg-canvas border border-line bg-white;
+}
+@utility field {
+  @apply h-10 w-full rounded-lg border border-line bg-white px-3 text-[14px] text-ink outline-none transition focus:border-brand-300 focus:ring-4 focus:ring-brand-100;
+}
+@utility card {
+  @apply rounded-2xl border border-line bg-white;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-rise { animation: rise 0.35s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
