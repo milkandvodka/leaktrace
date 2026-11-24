@@ -100,46 +100,70 @@ def _flann():
     return cv2.FlannBasedMatcher(dict(algorithm=6, table_number=6, key_size=12, multi_probe_level=1), dict(checks=64))
 
 
+VIDEO_SPEEDS = (1.0, 1.25, 1.5, 0.75, 2.0)
+MAX_VIDEO_SAMPLES = 600  # 2 minutes of the clip at 5 per second is plenty to place it
+
+
+def _geometry(samples: list[np.ndarray], idx: dict) -> np.ndarray:
+    """Homography from the clip's frames onto the lecture's (640x360 grey). Lecture slides share a template, so
+    matching against any keyframe gives the camera's geometry even when the slide itself differs."""
+    matcher = _flann()
+    matcher.add([idx["desc"]])
+    matcher.train()
+    best, best_inliers = np.eye(3), 0
+    for gray in samples[:: max(1, len(samples) // 8)][:8]:
+        kp, d = index.orb().detectAndCompute(gray, None)
+        if d is None or len(kp) < 12:
+            continue
+        good = [m[0] for m in matcher.knnMatch(d, k=2) if len(m) == 2 and m[0].distance < 0.8 * m[1].distance]
+        if len(good) < 12:
+            continue
+        src = np.float32([kp[m.queryIdx].pt for m in good])
+        dst = idx["pts"][[m.trainIdx for m in good]]
+        H, inl = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
+        if H is not None and int(inl.sum()) > best_inliers:
+            best, best_inliers = H, int(inl.sum())
+    return best if best_inliers >= 15 else np.eye(3)
+
+
 def _by_video(leak: Path, lectures: list[Path], duration: float):
-    probe_fps = 2.0
-    samples = [(n / probe_fps, gray_small(f)) for n, f in enumerate(media.frames(leak, WIDTH, HEIGHT, probe_fps))][:120]
+    """Straighten the clip's frames, then slide their thumbnail sequence along each lecture's and score every
+    offset (and a few playback speeds) at once; the best offset is pinned to the frame with the motion trace."""
+    grays = [gray_small(f) for _, f in zip(range(MAX_VIDEO_SAMPLES), media.frames(leak, WIDTH, HEIGHT, index.THUMB_FPS))]
+    if len(grays) < 10:
+        return None
     best = None
     for folder in lectures:
         idx = index.get(folder)
-        if not len(idx["desc"]):
+        M = idx["thumbs"]
+        if not len(M) or not len(idx["desc"]):
             continue
-        matcher = _flann()
-        matcher.add([idx["desc"]])
-        matcher.train()
-        hits = []  # (clip time, master time)
-        for t, gray in samples:
-            kp, d = index.orb().detectAndCompute(gray, None)
-            if d is None or len(kp) < 12:
+        H = _geometry(grays, idx)
+        size = (grays[0].shape[1], grays[0].shape[0])
+        L = index.centred(np.stack([index.thumb(cv2.warpPerspective(g, H, size)) for g in grays]), idx["thumb_mean"])
+        S = L @ M.T  # cosine similarity: clip sample x lecture thumbnail
+        j = np.arange(len(L))
+        for speed in VIDEO_SPEEDS:
+            span = int(np.ceil(speed * (len(L) - 1)))
+            if span >= len(M):
                 continue
-            good = [m[0] for m in matcher.knnMatch(d, k=2) if len(m) == 2 and m[0].distance < 0.75 * m[1].distance]
-            if len(good) < 12:
-                continue
-            segs = idx["seg"][[m.trainIdx for m in good]]
-            for s in np.bincount(segs).argsort()[::-1][:3]:
-                sel = [m for m, sg in zip(good, segs) if sg == s]
-                if len(sel) < 12:
-                    continue
-                src = np.float32([kp[m.queryIdx].pt for m in sel])
-                dst = idx["pts"][[m.trainIdx for m in sel]]
-                H, inl = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
-                if H is not None and int(inl.sum()) >= 15:
-                    hits.append((t, (s + 0.5) * SEG_SECONDS))
-                    break
-        if len(hits) >= 3:
-            rough = float(np.median([m - c for c, m in hits]))
-            if best is None or len(hits) > best[0]:
-                best = (len(hits), folder, rough)
-    if best is None:
+            offsets = np.arange(len(M) - span)
+            cols = offsets[:, None] + np.round(speed * j)[None, :].astype(int)
+            score = S[j[None, :], cols].mean(axis=1)
+            k = int(np.argmax(score))
+            # With the lecture's template removed, a true match scores high in absolute terms and well above a
+            # typical offset. (Neighbouring offsets on a static slide score almost as high, so a runner-up test
+            # would reject real matches; the motion trace settles the exact frame afterwards.)
+            lift = float(score[k]) - float(np.median(score))
+            if best is None or score[k] > best[0]:
+                best = (float(score[k]), lift, folder, offsets[k] / index.THUMB_FPS, speed)
+    if best is None or best[0] < 0.55 or best[1] < 0.2:
         return None
-    votes, folder, rough = best
+    score, _standout, folder, rough, speed = best
     meta = LectureMeta.load(folder)
-    offset = _refine_by_motion(leak, index.get(folder)["motion"], rough, duration)
-    return Location(meta.id, offset, 1.0, votes, "video", duration, _covered(meta, offset, 1.0, duration))
+    offset = _refine_by_motion(leak, index.get(folder)["motion"], rough, duration, search=3.0) if speed == 1.0 else rough
+    return Location(meta.id, float(offset), float(speed), int(round(score * 100)), "video", duration,
+                    _covered(meta, offset, speed, duration))
 
 
 def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, duration: float, search: float = 12.0) -> float:

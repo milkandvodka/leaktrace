@@ -21,6 +21,22 @@ FAN, MAX_DT, MAX_DF = 3, 63, 63
 PEAKS_PER_S = 25
 F_LO, F_HI = 8, 220  # bins: ~125 Hz to ~3.4 kHz, the band a phone keeps
 MOTION_W, MOTION_H = 80, 45
+THUMB_W, THUMB_H = 64, 36   # sequence-matching thumbnails for clips with no audio
+THUMB_FPS = 5               # one thumbnail every 0.2 s (every 5th frame at 25 fps)
+
+
+def thumb(gray: np.ndarray) -> np.ndarray:
+    """A small high-passed grey thumbnail (local contrast, where text lines live; lighting gradients drop out),
+    unit length. Lecture-wide structure is removed later by subtracting the lecture's mean thumbnail."""
+    t = cv2.resize(gray, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA).astype(np.float32)
+    t = (t - cv2.GaussianBlur(t, (0, 0), 2.0)).ravel()
+    return t / (np.linalg.norm(t) + 1e-6)
+
+
+def centred(thumbs: np.ndarray, mean: np.ndarray) -> np.ndarray:
+    """Thumbnails minus the lecture's mean thumbnail (its shared template), back to unit length."""
+    x = thumbs - mean
+    return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-6)
 
 
 def peaks(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -94,11 +110,13 @@ def build(folder: Path) -> None:
     order = np.argsort(hashes, kind="stable")
     np.savez_compressed(folder / "fp.npz", hashes=hashes[order], times=times[order])
 
-    desc, seg_of, pts, moves, prev = [], [], [], [], None
+    desc, seg_of, pts, moves, thumbs, prev = [], [], [], [], [], None
     for n, f in enumerate(media.frames(mezz, WIDTH, HEIGHT, FPS)):
         gray = gray_small(f)
         mv, prev = motion(gray, prev)
         moves.append(mv)
+        if n % (FPS // THUMB_FPS) == 0:
+            thumbs.append(thumb(gray))
         if n % SEG_FRAMES == SEG_FRAMES // 2:
             kp, d = orb().detectAndCompute(gray, None)
             if d is not None:
@@ -109,15 +127,18 @@ def build(folder: Path) -> None:
                         desc=np.concatenate(desc) if desc else np.zeros((0, 32), np.uint8),
                         seg=np.concatenate(seg_of) if seg_of else np.zeros(0, np.int32),
                         pts=np.concatenate(pts) if pts else np.zeros((0, 2), np.float32),
-                        motion=np.float32(moves))
+                        motion=np.float32(moves),
+                        thumbs=np.stack(thumbs).astype(np.float16) if thumbs else np.zeros((0, THUMB_W * THUMB_H), np.float16))
 
 
 @lru_cache(maxsize=256)
 def load(folder: str, stamp: float) -> dict:
     """A lecture's index, cached until its files change (stamp = modification time)."""
     fp, kf = np.load(Path(folder) / "fp.npz"), np.load(Path(folder) / "kf.npz")
+    thumbs = kf["thumbs"].astype(np.float32)
+    mean = thumbs.mean(axis=0) if len(thumbs) else np.zeros(THUMB_W * THUMB_H, np.float32)
     return {"hashes": fp["hashes"], "times": fp["times"], "desc": kf["desc"], "seg": kf["seg"], "pts": kf["pts"],
-            "motion": kf["motion"]}
+            "motion": kf["motion"], "thumbs": centred(thumbs, mean) if len(thumbs) else thumbs, "thumb_mean": mean}
 
 
 def get(folder: Path) -> dict:
