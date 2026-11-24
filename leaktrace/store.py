@@ -1,6 +1,7 @@
 """SQLite: students, lectures, who opened what (the view log that narrows suspects), jobs and trace reports."""
 import json
 import sqlite3
+from contextlib import closing
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, status
                                  detail TEXT, result TEXT, error TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS traces (id TEXT PRIMARY KEY, lecture TEXT, verdict TEXT, report TEXT NOT NULL,
                                    created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS watched (key TEXT PRIMARY KEY, trace TEXT, at TEXT NOT NULL);
 """
 
 
@@ -28,7 +30,7 @@ class Store:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        with self._db() as db:
+        with closing(self._db()) as db, db:
             db.executescript(SCHEMA)
 
     def _db(self) -> sqlite3.Connection:
@@ -38,11 +40,11 @@ class Store:
         return db
 
     def _write(self, sql: str, args=()) -> None:
-        with self._lock, self._db() as db:
+        with self._lock, closing(self._db()) as db, db:  # closing() closes; the inner `db` commits
             db.execute(sql, args)
 
     def _rows(self, sql: str, args=()) -> list[dict]:
-        with self._db() as db:
+        with closing(self._db()) as db:
             return [dict(r) for r in db.execute(sql, args)]
 
     # students
@@ -114,6 +116,13 @@ class Store:
 
     def traces(self) -> list[dict]:
         return self._rows("SELECT id, lecture, verdict, created FROM traces ORDER BY created DESC")
+
+    # posts the Telegram watcher has handled
+    def seen(self, key: str) -> bool:
+        return bool(self._rows("SELECT 1 FROM watched WHERE key=?", (key,)))
+
+    def mark_seen(self, key: str, trace_id: str | None) -> None:
+        self._write("INSERT OR REPLACE INTO watched (key, trace, at) VALUES (?, ?, ?)", (key, trace_id, now()))
 
 
 def _decode(row: dict, field: str) -> dict:
