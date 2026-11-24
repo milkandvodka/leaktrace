@@ -191,3 +191,25 @@ These are tuned with the bench and logged in the plan's ledger:
 - registration settings;
 - decoy counts;
 - verdict thresholds.
+
+## v2: a generic plug-in for any streaming service (approved 2026-11-25)
+
+**Why.** Piracy is the same problem for every streaming service. LeakTrace must plug into any of them and be configured, not built around one platform or one kind of content. It must fit how streaming really works: players fetch HLS or DASH manifests and ~2 s segments, and CDNs cache those segments. v1's per-viewer segment URLs, served by LeakTrace itself, defeat CDN caching.
+
+**Terms.** A *title* is any video in the catalogue; a *viewer* is an account. No lecture- or student-specific names in code, API or UI (the synthetic test lecture stays a lecture).
+
+**Any source.** Titles keep their own frame rate (CFR, up to 60 fps) and resolution (up to `LEAKTRACE_MAX_HEIGHT`, default 1080). Segments are a whole number of frames, about `LEAKTRACE_SEGMENT_SECONDS` (default 2.0) long: 48 frames at 24 fps, 50 at 25, 60 at 30 or 29.97, 100 at 50, 120 at 60. Audio is 48 kHz. Marking happens on the title's own frames; analysis (locating and measuring) happens on a copy fitted inside 1280×720 at the title's frame rate. Patterns are defined on the content's own coordinates, so both agree.
+
+**Output (CMAF).** Packaging writes fragmented-MP4 segments for each rung of a configurable quality ladder (`LEAKTRACE_LADDER`, default `1080,720,480,360`, capped at the source), in variants A and B, plus an audio track in A and B. One set of files serves HLS (multivariant playlist, `EXT-X-MAP`) and DASH (MPD with `SegmentTimeline`). Segment files have unguessable names derived from a naming key, so nobody can tell A from B or guess the other variant. The playlists and MPD are the same for every viewer.
+
+**Three ways to plug in** (the platform picks per deployment):
+
+1. **CDN edge switching** (the industry model of ETSI TS 104 002). When a viewer starts watching, the platform asks LeakTrace for a session; LeakTrace logs it and returns a signed token carrying that viewer's A/B decisions for the title. The player opens `/<prefix>/<token>/<title>/master.m3u8` (or `manifest.mpd`); relative segment URLs keep the token in their path. A small function at the CDN edge verifies the token and maps each segment request to the A or B object, which the CDN caches like any file. Reference functions are provided for Cloudflare Workers and Amazon CloudFront, and LeakTrace's own server implements the same route for testing or small deployments.
+2. **Per-viewer manifests**, for CDNs that can't run code: LeakTrace serves a per-viewer playlist or MPD whose segment URLs point straight at the CDN's A or B objects (`LEAKTRACE_MEDIA_URL`). Only the small manifest is per viewer; every segment stays cacheable.
+3. **Bring your own pipeline:** LeakTrace exports two marked masters (A and B, keyframes on the segment grid) and the grid. The platform encodes and DRM-protects both exactly as it does today, keeps segment boundaries on the grid, and uses edge switching with its own path layout (`{variant}` in a configurable path template).
+
+Tracing is unchanged: it needs only the title's unmarked mezzanine, index and grid, whichever way the copies were delivered. A per-viewer MP4 download remains for offline viewing.
+
+**Configuration** is environment variables (Docker-friendly), documented in `.env.example`: secret, admin token, data folder, organisation name (used in takedown notices), segment seconds, ladder, max height, media URL, token lifetime.
+
+**Not in v2:** live streams; multi-period DASH and ad insertion; encrypting the token payload (it is signed, so it can't be altered, but a viewer can read their own pattern).
