@@ -24,11 +24,11 @@ FP_SR = 8_000  # landmark fingerprints and timing use phone-band audio, which su
 @dataclass(frozen=True)
 class Budget:
     """How strong each carrier is. Starting values from the design; the attack bench tunes them."""
-    brightness: float = 1.5      # luma code values
+    brightness: float = 1.2      # luma code values
     tint: float = 1.2            # Cb/Cr code values
-    saturation: float = 0.015    # fraction of chroma radius
-    hue_deg: float = 0.6
-    contrast: float = 0.006      # fraction around mid-grey
+    saturation: float = 0.03     # fraction of chroma radius (smaller changes round away in flat colour)
+    hue_deg: float = 1.5
+    contrast: float = 0.010      # fraction around mid-grey
     patchwork_db: float = 0.7
     loudness_db: float = 0.25
     tilt_db: float = 0.4

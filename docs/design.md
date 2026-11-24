@@ -78,11 +78,13 @@ Every carrier is antipodal, meaning rendition A adds +x and B adds −x. Each on
 
 | # | Family | Carrier | What changes | Initial budget (the bench tunes these) |
 |---|---|---|---|---|
-| 1 | Picture | Brightness | Smooth keyed low-frequency luma pattern | ≤ 1.5 code values |
+| 1 | Picture | Brightness | Smooth keyed low-frequency luma pattern | ≤ 1.2 code values |
 | 2 | Picture | Tint | Additive keyed Cb and Cr patterns. Hue and saturation move everywhere, including on grey and white slides | ≤ 1.2 code values |
-| 3 | Picture | Saturation | Chroma radius × (1 + pattern), in colourful regions | ≤ 1.5 % |
-| 4 | Picture | Hue | Chroma angle + pattern, in colourful regions | ≤ 0.6° |
-| 5 | Picture | Contrast | Tone around mid-grey | ≤ 0.6 % |
+| 3 | Picture | Saturation | Chroma radius × (1 + pattern), in colourful regions | ≤ 3 % |
+| 4 | Picture | Hue | Chroma angle + pattern, in colourful regions | ≤ 1.5° |
+| 5 | Picture | Contrast | Local contrast around mid-grey, by pattern | ≤ 1 % |
+
+Brightness and contrast together never move luma by more than 2 code values. The saturation, hue and contrast budgets were raised from the first draft (1.5 %, 0.6°, 0.6 %). Below about half a code value, changes in flat colour round away, and an encoder removes them anyway. The new values are still below typical just-noticeable differences.
 | 6 | Audio | Spectral patchwork | Keyed gains on 80 ms × 200 Hz tiles, 300–3300 Hz | ≤ 0.7 dB per tile |
 | 7 | Audio | Loudness | Broadband gain envelope | ≤ 0.25 dB |
 | 8 | Audio | Tone balance | Low band versus high band | ≤ 0.4 dB |
