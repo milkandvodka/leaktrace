@@ -42,6 +42,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("leak", type=Path)
     s.add_argument("--first-seen", help="ISO time the leak was first seen (narrows suspects)")
 
+    s = sub.add_parser("watch", help="watch Telegram channels/groups and trace every new video")
+    s.add_argument("chats", nargs="+", help="@username, t.me link or numeric id")
+    s.add_argument("--backfill", type=int, default=20, help="also trace this many recent posts per chat")
+
     s = sub.add_parser("bench", help="attack bench on a packaged lecture")
     s.add_argument("lecture")
     s.add_argument("--students", type=int, default=2)
@@ -74,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
         r = trace(a.leak, _store(), first_seen=a.first_seen,
                   progress=lambda p: print(f"\r{p:5.0%}", end="", file=sys.stderr))
         print("\n" + json.dumps({k: v for k, v in r.as_dict().items() if k != "segments"}, indent=1))
+    elif a.cmd == "watch":
+        from .watch import run_telegram
+        run_telegram(a.chats, backfill=a.backfill)
     elif a.cmd == "bench":
         from .bench.attacks import ATTACKS
         from .bench.run import bench
