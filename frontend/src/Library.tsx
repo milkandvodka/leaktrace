@@ -39,7 +39,7 @@ export function Library({ onAuth }: { onAuth: () => void }) {
       </div>
       <form onSubmit={add} className="card p-5 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
         <label className="text-[12.5px] text-muted">Title<input className="field mt-1" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Pharmacology: beta blockers" /></label>
-        <label className="text-[12.5px] text-muted">Master video<input className="field mt-1 pt-1.5" type="file" accept="video/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        <label className="text-[12.5px] text-muted">Master video<input className="field mt-1 pt-[5px] text-muted file:mr-3 file:h-7 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:text-[13px] file:font-semibold file:text-brand-700 hover:file:bg-brand-100" type="file" accept="video/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
         <button className="btn-primary h-10" type="submit" disabled={busy || !file || !title.trim()}>
           {busy ? <><LoaderCircle size={16} className="animate-spin" /> {Math.round(progress * 100)}%</> : <><Plus size={16} /> Add lecture</>}
         </button>
@@ -54,7 +54,7 @@ export function Library({ onAuth }: { onAuth: () => void }) {
                 <tr key={l.id} className="border-t border-line">
                   <td className="px-5 py-3"><div className="text-ink font-medium">{l.title}</div><div className="text-[12px] text-faint">{l.id}</div></td>
                   <td className="px-3 py-3 tabular-nums">{l.meta ? mmss(l.meta.duration) : "-"}</td>
-                  <td className="px-3 py-3 tabular-nums">{l.meta ? `${l.meta.marked} of ${l.meta.segments}` : "-"}</td>
+                  <td className="px-3 py-3 tabular-nums">{l.meta?.marked != null ? `${l.meta.marked} of ${l.meta.segments}` : "-"}</td>
                   <td className="px-5 py-3"><span className={`text-[12.5px] font-semibold rounded-full px-2.5 py-0.5 ${STATUS[l.status]}`}>{l.status}</span></td>
                 </tr>
               ))}

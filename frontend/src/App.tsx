@@ -9,11 +9,11 @@ import { TraceView } from "./Trace";
 import { Watch } from "./Watch";
 
 const TABS = [
-  { key: "trace", label: "Trace a leak", Icon: ScanSearch },
-  { key: "lectures", label: "Lectures", Icon: Film },
-  { key: "watch", label: "Watch as a student", Icon: PlayCircle },
-  { key: "students", label: "Students", Icon: Users },
-  { key: "bench", label: "Attack bench", Icon: ShieldCheck },
+  { key: "trace", label: "Trace a leak", short: "Trace", Icon: ScanSearch },
+  { key: "lectures", label: "Lectures", short: "Lectures", Icon: Film },
+  { key: "watch", label: "Watch as a student", short: "Watch", Icon: PlayCircle },
+  { key: "students", label: "Students", short: "Students", Icon: Users },
+  { key: "bench", label: "Attack bench", short: "Bench", Icon: ShieldCheck },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -57,11 +57,11 @@ export default function App() {
           <span className="font-bold text-ink text-[16px] tracking-[-0.01em]">LeakTrace</span>
           <span className="hidden md:inline text-[13px] text-muted border-l border-line pl-3">Every copy is unique. Every leak has an owner.</span>
         </div>
-        <nav aria-label="Sections" className="max-w-[1100px] mx-auto px-4 sm:px-6 flex gap-1 overflow-x-auto">
-          {TABS.map(({ key, label, Icon }) => (
+        <nav aria-label="Sections" className="max-w-[1100px] mx-auto px-1.5 sm:px-6 flex sm:gap-1 overflow-x-auto">
+          {TABS.map(({ key, label, short, Icon }) => (
             <button key={key} type="button" onClick={() => go(key)} aria-current={tab === key ? "page" : undefined}
-              className={`flex items-center gap-2 whitespace-nowrap px-3 h-10 text-[14px] font-semibold border-b-2 transition outline-none focus-visible:bg-brand-50 ${tab === key ? "border-brand-700 text-ink" : "border-transparent text-muted hover:text-ink"}`}>
-              <Icon size={16} /> {label}
+              className={`flex items-center gap-2 whitespace-nowrap px-2.5 sm:px-3 h-10 text-[14px] font-semibold border-b-2 transition outline-none focus-visible:bg-brand-50 ${tab === key ? "border-brand-700 text-ink" : "border-transparent text-muted hover:text-ink"}`}>
+              <Icon size={16} className="hidden sm:block" /><span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span>
             </button>
           ))}
         </nav>

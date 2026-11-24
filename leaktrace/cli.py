@@ -65,7 +65,8 @@ def main(argv: list[str] | None = None) -> int:
         st.add_lecture(a.id, a.title)
         meta = ingest(a.master, a.id, a.title, progress=lambda p: print(f"\r{p:5.0%}", end="", file=sys.stderr),
                       preset=a.preset)
-        st.set_lecture(a.id, "ready", {"segments": meta.n_segments, "duration": meta.duration})
+        st.set_lecture(a.id, "ready", {"duration": meta.duration, "segments": meta.n_segments,
+                                       "marked": meta.marked_segments, "has_audio": meta.has_audio})
         print(f"\npackaged {meta.id}: {meta.n_segments} segments, {meta.marked_segments} marked")
     elif a.cmd == "student":
         _store().add_student(a.id, a.name)
