@@ -167,4 +167,4 @@ python -m pytest -m slow           # packages and traces 150 s titles at 25 and 
 
 ## Licence
 
-Not chosen yet. LeakTrace calls ffmpeg as a separate program, and does not link it.
+MIT (see `LICENSE`). LeakTrace calls ffmpeg as a separate program, and does not link it.
