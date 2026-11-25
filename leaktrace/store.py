@@ -25,6 +25,12 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def utc(t: str) -> str:
+    """Any ISO time (with or without a zone; no zone means UTC) in the one format stored, so text order is time order."""
+    d = datetime.fromisoformat(t)
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
 class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -77,12 +83,12 @@ class Store:
 
     # views
     def log_view(self, student: str, lecture: str, kind: str, at: str | None = None) -> None:
-        self._write("INSERT INTO views (student, lecture, kind, at) VALUES (?, ?, ?, ?)", (student, lecture, kind, at or now()))
+        self._write("INSERT INTO views (student, lecture, kind, at) VALUES (?, ?, ?, ?)", (student, lecture, kind, utc(at) if at else now()))
 
     def viewers(self, lecture: str, before: str | None = None) -> list[str]:
         """Students who opened the lecture (before `before`, an ISO time, when given)."""
         sql = "SELECT DISTINCT student FROM views WHERE lecture=?" + (" AND at < ?" if before else "") + " ORDER BY student"
-        return [r["student"] for r in self._rows(sql, (lecture, before) if before else (lecture,))]
+        return [r["student"] for r in self._rows(sql, (lecture, utc(before)) if before else (lecture,))]
 
     # jobs
     def create_job(self, jid: str, kind: str, detail: dict | None = None) -> None:

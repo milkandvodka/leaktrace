@@ -21,7 +21,6 @@ import hmac
 import json
 import os
 import re
-import shutil
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -29,7 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel, StringConstraints
@@ -163,6 +162,10 @@ def add_lecture(id: Annotated[str, Form()], title: Annotated[str, Form()], file:
         raise HTTPException(422, "Lecture ids: lowercase letters, digits and dashes, up to 64.")
     if not title.strip():
         raise HTTPException(422, "A title is required.")
+    existing = store().lecture(id)
+    if (existing and existing["status"] != "failed") or (lecture_dir(id) / "meta.json").exists():
+        # Viewers already hold copies of it; replacing it would make their leaks untraceable.
+        raise HTTPException(409, "A lecture with this id already exists. Pick another id.")
     path = _save_upload(file, "masters")
     store().add_lecture(id, title.strip(), "processing")
     preset = os.getenv("LEAKTRACE_PRESET", "medium")
@@ -193,21 +196,21 @@ def add_students(body: StudentsIn) -> dict:
 
 
 @app.post("/api/sessions", dependencies=[Admin])
-def session(body: SessionIn, request: Request) -> dict:
+def session(body: SessionIn) -> dict:
     if not (lecture_dir(body.lecture) / "meta.json").exists():  # packaged files are the truth (API or CLI)
         raise HTTPException(404, "No such lecture (or it isn't packaged yet).")
     if body.student not in set(store().student_ids()):
         raise HTTPException(404, "No such student.")
     token = _session_token(body.lecture, body.student)
-    base = str(request.base_url).rstrip("/")
-    return {"playlist": f"{base}/play/{token}.m3u8", "download": f"{base}/download/{token}"}
+    # Relative links: right behind any proxy or CDN, whatever host and scheme the viewer reached us on.
+    return {"playlist": f"/play/{token}.m3u8", "download": f"/download/{token}"}
 
 
 @app.get("/play/{token}.m3u8")
-def play(token: str, request: Request) -> PlainTextResponse:
+def play(token: str) -> PlainTextResponse:
     lecture, student = _open_session(token)
     store().log_view(student, lecture, "play")
-    text = deliver.playlist(lecture, student, str(request.base_url).rstrip("/"))
+    text = deliver.playlist(lecture, student, "")
     return PlainTextResponse(text, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "no-store"})
 
 

@@ -19,7 +19,8 @@ from .ingest import LectureMeta
 SPEEDS = np.array(sorted(set(np.round(np.arange(0.76, 2.0001, 0.02), 2)) | {0.75, 1.25, 1.75}))
 MIN_VOTES = 12
 MAX_PLACES = 3   # places a clip may match about equally well (a lecture repeating itself)
-TIE = 0.75       # 'about equally': votes within this fraction of the best
+TIE = 0.25       # a second place counts from this fraction of the best (a clip from a 2-minute recap
+                 # of a 30-minute lecture still matches its source); a clip that isn't ours gets 2-4 votes
 
 
 @dataclass
@@ -60,19 +61,9 @@ def _by_audio(leak: Path, lectures: list[Path], duration: float) -> list[Locatio
         best = _vote(t, f, [best[1]], np.round(best[2] + np.arange(-0.015, 0.0151, 0.005), 3), best)
     if best is None:
         return []
-    votes, folder, scale, offs, base, hist, q_t, m_t = best
-    peaks, h = [], hist.copy()
-    for _ in range(MAX_PLACES + 1):
-        k = int(np.argmax(h))
-        if h[k] == 0:
-            break
-        peaks.append((int(h[k]), k))
-        h[max(0, k - 3): k + 4] = 0
-    places = [pk for pk in peaks[:MAX_PLACES] if pk[0] >= TIE * peaks[0][0]]
-    rest = peaks[len(places)][0] if len(peaks) > len(places) else 0
-    # Well above noise, and clearly above every place that isn't a near-tie. A foreign clip has many similar
-    # small peaks, so it fails this; a genuine repeat gives a few tall ones, and trace reads each.
-    if votes < MIN_VOTES or votes < 1.5 * rest:
+    _votes, folder, scale, offs, base, hist, q_t, m_t = best
+    places = _places(hist)
+    if not places:
         return []
     meta = LectureMeta.load(folder)
     out = []
@@ -86,6 +77,25 @@ def _by_audio(leak: Path, lectures: list[Path], duration: float) -> list[Locatio
         offset, speed = a * index.FRAME_S, float(b)
         out.append(Location(meta.id, offset, speed, v, "audio", duration, _covered(meta, offset, speed, duration)))
     return out
+
+
+def _places(hist: np.ndarray) -> list[tuple[int, int]]:
+    """(votes, offset bin) of each place worth reading, best first; empty when nothing stands out.
+
+    A clip that isn't from the lecture gets 2-4 votes per offset; a real match gets dozens to thousands. Any
+    other tall peak is the same clip matching a passage the lecture repeats, so it's kept for trace to read."""
+    peaks, h = [], hist.copy()
+    for _ in range(MAX_PLACES + 1):
+        k = int(np.argmax(h))
+        if h[k] == 0:
+            break
+        peaks.append((int(h[k]), k))
+        h[max(0, k - 3): k + 4] = 0
+    if not peaks or peaks[0][0] < MIN_VOTES:
+        return []
+    places = [pk for pk in peaks[:MAX_PLACES] if pk[0] >= max(MIN_VOTES, TIE * peaks[0][0])]
+    rest = peaks[len(places)][0] if len(peaks) > len(places) else 0
+    return places if peaks[0][0] >= 1.5 * rest else []
 
 
 def _vote(t, f, lectures, speeds, best=None):

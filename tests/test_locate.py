@@ -1,3 +1,4 @@
+import numpy as np
 from leaktrace import media
 from leaktrace.config import SEG_SECONDS
 from leaktrace.locate import locate
@@ -49,3 +50,24 @@ def test_foreign_video_returns_none(packaged, tmp_path):
     media.run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=15", "-f", "lavfi",
                "-i", "sine=frequency=440:duration=15", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", other])
     assert locate(other, _lectures(packaged)) is None
+
+
+def _hist(*peaks):
+    h = np.zeros(2000, np.int64)
+    h[::7] = 3  # what a clip that isn't ours gets everywhere: 2-4 votes
+    for k, v in peaks:
+        h[k] = v
+    return h
+
+
+def test_partial_repeat_is_kept_as_a_second_place():
+    from leaktrace.locate import _places
+    # Measured on a vertical repost whose clip partly repeats elsewhere in the lecture: 1,281 vs 943 votes.
+    assert [k for _v, k in _places(_hist((300, 1281), (900, 943)))] == [300, 900]
+    assert [k for _v, k in _places(_hist((300, 1281), (900, 330)))] == [300, 900]  # a short overlap still counts
+
+
+def test_noise_alone_is_never_a_place():
+    from leaktrace.locate import _places
+    assert _places(_hist()) == []
+    assert _places(_hist((500, 9))) == []  # below MIN_VOTES

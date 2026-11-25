@@ -1,4 +1,5 @@
 import time
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,8 +12,12 @@ ADMIN = {"Authorization": "Bearer test-admin-token"}
 @pytest.fixture(scope="module")
 def client(packaged):
     from leaktrace import server
-    with TestClient(server.app) as c:
-        yield c
+    with pytest.MonkeyPatch.context() as mp:  # other tests' monkeypatched data dirs must not leak in
+        mp.setenv("LEAKTRACE_DATA", str(packaged[0]))
+        server.store.cache_clear()
+        server.jobs.cache_clear()
+        with TestClient(server.app) as c:
+            yield c
 
 
 def _wait(client, job_id, timeout=300):
@@ -40,6 +45,7 @@ def test_session_playlist_segments_and_view_log(client):
     r = client.post("/api/sessions", json={"lecture": "lec40", "student": "s00042"}, headers=ADMIN)
     assert r.status_code == 200
     play = r.json()["playlist"]
+    assert play.startswith("/play/") and r.json()["download"].startswith("/download/")  # relative: works behind a proxy
     text = client.get(play).text
     seg_urls = [l for l in text.splitlines() if "/s/" in l]
     assert text.startswith("#EXTM3U") and len(seg_urls) == 21
@@ -80,14 +86,18 @@ def test_lecture_upload_packages_it(client, tmp_path, monkeypatch):
     master = tmp_path / "m.mp4"
     media.run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=4.5", "-f", "lavfi",
                "-i", "sine=frequency=300:duration=4.5", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", master])
+    lid = f"upl-{uuid.uuid4().hex[:8]}"  # the test data folder is a cache kept between runs
     with open(master, "rb") as f:
-        r = client.post("/api/lectures", data={"id": "upl-1", "title": "Uploaded"},
+        r = client.post("/api/lectures", data={"id": lid, "title": "Uploaded"},
                         files={"file": ("m.mp4", f, "video/mp4")}, headers=ADMIN)
     assert r.status_code == 200
     job = _wait(client, r.json()["job"])
     assert job["status"] == "done", job
-    lec = next(l for l in client.get("/api/lectures", headers=ADMIN).json() if l["id"] == "upl-1")
+    lec = next(l for l in client.get("/api/lectures", headers=ADMIN).json() if l["id"] == lid)
     assert lec["status"] == "ready"
     bad = client.post("/api/lectures", data={"id": "Bad Id!", "title": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
                       headers=ADMIN)
     assert bad.status_code == 422
+    again = client.post("/api/lectures", data={"id": "lec40", "title": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
+                        headers=ADMIN)
+    assert again.status_code == 409  # never silently replace a lecture students already have copies of

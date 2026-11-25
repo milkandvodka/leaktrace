@@ -115,3 +115,14 @@ def test_clip_of_a_repeated_passage_is_read_at_the_right_copy(rep80, tmp_path):
     assert r.location is not None, r.verdict  # the passage plays at 4 s and at 44 s: both match equally
     assert r.location["offset"] == pytest.approx(44, abs=0.15)
     assert r.suspects[0]["student"] == LEAKER, r.suspects[:3]
+
+
+@pytest.mark.slow
+def test_clip_partly_overlapping_a_repeat_is_still_located(rep80, tmp_path):
+    clip = tmp_path / "clip.mp4"  # 35-65 s: its last 25 s also play at 0-25 s (a 0.71x second match)
+    media.run(["-ss", "35", "-i", deliver.export("rep80", LEAKER), "-t", "30", "-c:v", "libx264", "-preset", "veryfast",
+               "-c:a", "aac", clip])
+    r = trace(clip, rep80, candidates=STUDENTS)
+    assert r.location is not None, r.verdict
+    assert r.location["offset"] == pytest.approx(35, abs=0.15)
+    assert r.suspects[0]["student"] == LEAKER, r.suspects[:3]
