@@ -135,7 +135,7 @@ def publish(work: Path, out: Path, title_id: str, rungs: list[Rung], n_segments:
             if sa != sb:
                 raise PackagingError(f"{tid}: segment {n} differs in timing between A and B")
             segs.append({"t": sa.start, "d": sa.duration, "frames": sa.samples,
-                         "bytes": [fa.stat().st_size, fb.stat().st_size]})
+                         "bytes": max(fa.stat().st_size, fb.stat().st_size)})  # never which is which
             os.replace(fa, out / f"{object_name(nk, title_id, tid, n, 'A')}.m4s")
             os.replace(fb, out / f"{object_name(nk, title_id, tid, n, 'B')}.m4s")
         (out / f"{tid}-init.mp4").write_bytes(init)

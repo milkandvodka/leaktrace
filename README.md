@@ -83,6 +83,7 @@ Drop a leak into the UI, `POST /api/traces`, or `python -m leaktrace trace leake
 - **Large coalitions.** Two or three viewers mixing their copies still point at one of them. Dozens mixing carefully will dilute every mark; the code length needed grows with the square of the coalition size.
 - **Re-creation.** Someone who re-records the title in their own voice, or retypes the slides, has made a new work with no marks in it.
 - **Beyond the account.** It identifies the account that received the copy, not the person holding the phone.
+- **Shared links.** A session token plays as its owner until it expires (6 hours by default), so a copy made from a link someone shared traces back to the person who shared it. Hand tokens only to signed-in viewers, and keep them short-lived.
 - **Live streams.** Titles are packaged before they're published.
 
 ## Running it

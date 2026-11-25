@@ -80,6 +80,11 @@ def test_audio_segments_follow_the_grid_without_drift(clip):
         assert abs(s["t"] - meta.grid.sample(n)) <= 512  # the AAC frame nearest the exact boundary, no drift
 
 
+def test_the_index_doesnt_say_which_size_belongs_to_which_variant(clip):
+    _folder, _meta, tracks = clip  # the origin may serve tracks.json; a viewer could match their segment sizes
+    assert all(isinstance(s["bytes"], int) for t in tracks["tracks"] for s in t["segments"])
+
+
 def test_variants_differ_only_where_marked_and_names_reveal_nothing(clip):
     folder, meta, _ = clip
     a, b = _obj(folder, meta, "v360", 0, "A"), _obj(folder, meta, "v360", 0, "B")

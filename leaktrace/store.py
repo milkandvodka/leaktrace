@@ -21,6 +21,26 @@ CREATE TABLE IF NOT EXISTS watched (key TEXT PRIMARY KEY, trace TEXT, at TEXT NO
 """
 
 
+# v1 names (lectures and students) -> v2 (titles and viewers): (table, old column, new column) renames, in order.
+_V1_RENAMES = [("views", "student", "viewer"), ("views", "lecture", "title"), ("traces", "lecture", "title"),
+               ("lectures", "title", "name")]
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    """Upgrade a v1 database in place, keeping its data."""
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for table, old, new in _V1_RENAMES:
+        if table in tables and old in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}:
+            db.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+    db.execute("DROP INDEX IF EXISTS views_lecture")
+    for old, new in (("students", "viewers"), ("lectures", "titles")):
+        if old in tables and new in tables and not db.execute(f"SELECT 1 FROM {new} LIMIT 1").fetchone():
+            db.execute(f"DROP TABLE {new}")  # an upgrade stopped after creating it: the old table has the rows
+            tables.discard(new)
+        if old in tables and new not in tables:
+            db.execute(f"ALTER TABLE {old} RENAME TO {new}")
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -37,6 +57,7 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         with closing(self._db()) as db, db:
+            _migrate(db)
             db.executescript(SCHEMA)
 
     def _db(self) -> sqlite3.Connection:

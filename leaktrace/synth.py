@@ -26,22 +26,22 @@ from .config import HEIGHT, SR, WIDTH, tool
 FPS = 25  # synthetic titles: 1280x720 at 25 fps, 48 kHz mono
 
 SLIDES = [
-    ("Beta blockers", ["Block beta-1 receptors in the heart", "Lower heart rate and contractility",
-                       "Used in angina, hypertension and arrhythmias", "Avoid non-selective ones in asthma"]),
-    ("Loop diuretics", ["Act on the thick ascending limb", "Block the Na-K-2Cl cotransporter",
-                        "The strongest diuretic effect", "Watch for low potassium"]),
-    ("Insulin types", ["Rapid acting insulin covers meals", "Long acting insulin gives a steady base",
-                       "Doses follow glucose readings", "Hypoglycaemia is the main risk"]),
-    ("The cardiac cycle", ["Atrial contraction tops up the ventricles", "Isovolumetric contraction shuts the valves",
-                           "Ejection opens the aortic valve", "Relaxation lets the heart refill"]),
-    ("Anticoagulants", ["Heparin works through antithrombin", "Warfarin blocks vitamin K recycling",
-                        "Newer agents inhibit factor Xa", "Monitor every patient for bleeding"]),
-    ("Renal physiology", ["The glomerulus filters plasma", "The proximal tubule takes back most sodium",
-                          "The loop concentrates the urine", "The collecting duct answers to hormones"]),
-    ("Antibiotic classes", ["Penicillins block cell wall synthesis", "Macrolides act on the ribosome",
-                            "Quinolones inhibit DNA gyrase", "Overuse breeds resistance"]),
-    ("Thyroid hormones", ["T4 becomes T3 in the tissues", "They raise the metabolic rate",
-                          "Too much causes weight loss and tremor", "Too little causes fatigue and weight gain"]),
+    ("How rivers shape land", ["Fast water carries sand and stones", "Bends widen as the outer bank wears away",
+                               "Slow water drops what it carries", "Deltas grow where rivers meet the sea"]),
+    ("Weather fronts", ["A cold front pushes warm air upwards", "Rising air cools and forms clouds",
+                        "Warm fronts bring long steady rain", "Pressure falls as a front arrives"]),
+    ("Volcanoes", ["Magma rises through cracks in the crust", "Gas in the magma drives eruptions",
+                   "Ash clouds can travel very far", "Lava cools into new rock"]),
+    ("Ocean tides", ["The moon pulls the oceans towards it", "Two high tides pass each day",
+                     "Spring tides come with a full or new moon", "Neap tides are the smallest"]),
+    ("Glaciers", ["Snow packs down into ice over years", "Ice flows slowly downhill",
+                  "Glaciers carve wide valleys", "They leave rocks far from where they began"]),
+    ("Deserts", ["Little rain falls in a desert", "Days are hot and nights are cold",
+                 "Wind shapes the sand into dunes", "Plants store water to survive"]),
+    ("Rain forests", ["Rain falls almost every day", "Tall trees form a thick canopy",
+                      "Most animals live high in the trees", "The soil holds few nutrients"]),
+    ("Earthquakes", ["Plates of the crust slowly move", "Stress builds where plates lock",
+                     "A sudden slip releases waves", "Seismographs record the shaking"]),
 ]
 HEADER = (14, 111, 134)
 ACCENTS = [(234, 120, 40), (120, 70, 190), (40, 150, 90), (210, 60, 80)]

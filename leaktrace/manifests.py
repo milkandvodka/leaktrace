@@ -31,10 +31,10 @@ def _audio(index):
 
 
 def _rates(t) -> tuple[int, int]:
-    """(peak, average) bits per second over the track's segments (the larger of A and B each time)."""
+    """(peak, average) bits per second over the track's segments (each the larger of its A and B)."""
     peak, total, secs = 0, 0, 0.0
     for s in t["segments"]:
-        size, dur = max(s["bytes"]), s["d"] / t["timescale"]
+        size, dur = s["bytes"], s["d"] / t["timescale"]
         if dur > 0.25 * (t["segments"][0]["d"] / t["timescale"]):  # a short final segment overstates the peak
             peak = max(peak, 8 * size / dur)
         total, secs = total + size, secs + dur

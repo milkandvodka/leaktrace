@@ -28,7 +28,7 @@ export function ViewersView({ onAuth }: { onAuth: () => void }) {
       </div>
       <form onSubmit={add} className="card p-5">
         <label className="text-[12.5px] text-muted">One per line: id, name
-          <textarea className="field mt-1 h-24 py-2" value={text} onChange={(e) => setText(e.target.value)} placeholder={"s1001, Asha Rao\ns1002, Ravi Kumar"} />
+          <textarea className="field mt-1 h-24 py-2" value={text} onChange={(e) => setText(e.target.value)} placeholder={"v1001, Asha Rao\nv1002, Ravi Kumar"} />
         </label>
         <button className="btn-primary mt-3" type="submit" disabled={!text.trim()}><Plus size={16} /> Add viewers</button>
       </form>
