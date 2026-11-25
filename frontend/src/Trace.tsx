@@ -21,7 +21,7 @@ export function TraceView({ onAuth }: { onAuth: () => void }) {
   const fail = (e: unknown) => (e instanceof Unauthorized ? onAuth() : setError(e instanceof Error ? e.message : String(e)));
   const refresh = () => {
     api.traces().then(setHistory).catch(fail);
-    api.students().then((s) => setNames(Object.fromEntries(s.map((x) => [x.id, x.name])))).catch(fail);
+    api.viewers().then((s) => setNames(Object.fromEntries(s.map((x) => [x.id, x.name])))).catch(fail);
   };
   useEffect(refresh, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -43,7 +43,7 @@ export function TraceView({ onAuth }: { onAuth: () => void }) {
     <div className="space-y-7">
       <section>
         <h1 className="text-[30px] sm:text-[36px] font-bold text-ink tracking-tight leading-tight">Whose copy was this?</h1>
-        <p className="mt-2 text-[15.5px] text-body max-w-[640px]">Drop in a leaked video, even a re-compressed Telegram forward, a screen recording or a phone filming a screen. LeakTrace finds the lecture, reads the hidden marks, and names the account only when the evidence is overwhelming.</p>
+        <p className="mt-2 text-[15.5px] text-body max-w-[640px]">Drop in a leaked video, even a re-compressed Telegram forward, a screen recording or a phone filming a screen. LeakTrace finds the title, reads the hidden marks, and names the account only when the evidence is overwhelming.</p>
         <form onSubmit={run} className="mt-5 card p-5 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
           <label onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={drop}
             className={`flex items-center gap-3 rounded-xl border-2 border-dashed px-4 py-5 cursor-pointer transition ${over ? "border-brand-500 bg-brand-50" : "border-line hover:border-brand-300"}`}>
@@ -65,7 +65,7 @@ export function TraceView({ onAuth }: { onAuth: () => void }) {
         </form>
         {busy && (
           <div className="mt-4 card p-4" role="status">
-            <div className="flex justify-between text-[13.5px]"><span className="text-body">{progress < 0.03 ? "Finding which lecture this is" : "Reading the hidden marks"}</span><span className="tabular-nums text-muted">{Math.round(progress * 100)}%</span></div>
+            <div className="flex justify-between text-[13.5px]"><span className="text-body">{progress < 0.03 ? "Finding which title this is" : "Reading the hidden marks"}</span><span className="tabular-nums text-muted">{Math.round(progress * 100)}%</span></div>
             <div className="mt-2 h-2 rounded-full bg-canvas overflow-hidden"><div className="h-full bg-brand-500 transition-all" style={{ width: `${Math.max(3, progress * 100)}%` }} /></div>
           </div>
         )}

@@ -12,9 +12,9 @@ NAMES = {"brightness", "tint", "saturation", "hue", "contrast"}
 
 
 @pytest.fixture(scope="module")
-def frames(lecture_40s):
+def frames(title_40s):
     out = []
-    for i, f in enumerate(media.frames(lecture_40s, WIDTH, HEIGHT, 25, start=4.0)):
+    for i, f in enumerate(media.frames(title_40s, WIDTH, HEIGHT, 25, start=4.0)):
         out.append(f.copy())
         if i + 1 == SEG_FRAMES:
             return out
@@ -112,7 +112,7 @@ def test_budget(frames):
 
 
 def test_letterbox_untouched(frames):
-    box = (160, 0, 960, 720)  # a 4:3 lecture pillarboxed in the 16:9 canvas
+    box = (160, 0, 960, 720)  # a 4:3 title pillarboxed in the 16:9 canvas
     mid = range(6, 10)  # near the segment's start the temporal code is ~0 and rounding hides the marks
     marked = [picture.embed(frames[i], _t(i), box, KEY, "lec", 3, +1) for i in mid]
     for m, f in zip(marked, [frames[i] for i in mid]):

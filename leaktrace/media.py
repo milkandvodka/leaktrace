@@ -1,6 +1,6 @@
 """ffmpeg in and out: probing, streaming frames and audio, and the HLS encoder for a rendition.
 
-Everything streams: frames come one at a time from an ffmpeg pipe, so a lecture never sits in memory.
+Everything streams: frames come one at a time from an ffmpeg pipe, so a title never sits in memory.
 """
 import json
 import queue
@@ -117,7 +117,7 @@ def audio(path: Path, sr: int = SR, start: float = 0.0, dur: float | None = None
 
 
 class AudioReader:
-    """Mono float32 audio read front to back through one ffmpeg pipe (no whole-lecture buffer).
+    """Mono float32 audio read front to back through one ffmpeg pipe (no whole-title buffer).
     Gives silence when the file has no audio track, and zero-pads past the end."""
 
     def __init__(self, path: Path, sr: int = SR):
@@ -145,7 +145,7 @@ class Encoder:
     """One rendition as HLS: 1.92 s TS segments named 00000.ts... and index.m3u8.
 
     Frames stream into x264 with an IDR frame forced every 48 frames and scene-cut detection off, so every
-    rendition of a lecture has its cuts in the same places. Audio goes to a WAV on disk and is muxed in when the
+    rendition of a title has its cuts in the same places. Audio goes to a WAV on disk and is muxed in when the
     encoder closes; the video is stream-copied then, so the segment boundaries stay on those IDR frames.
     """
 

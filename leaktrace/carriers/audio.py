@@ -23,10 +23,10 @@ _CENTRES = LO_HZ + BAND_HZ * (np.arange(N_BANDS) + 0.5)
 _LOW, _HIGH = _CENTRES < TILT_HZ, _CENTRES > TILT_HZ
 
 
-def _pattern(key: bytes, lecture: str, seg: int, decoy: int | None = None) -> np.ndarray:
+def _pattern(key: bytes, title: str, seg: int, decoy: int | None = None) -> np.ndarray:
     """+/-1 per tile, balanced so that in every time tile the low bands sum to 0 and the high bands sum to 0
     (a group with an odd count gets one 0). Patchwork then adds nothing to the loudness or tilt measurements."""
-    g = rng(key, *(("patch", lecture, seg) if decoy is None else ("patch-decoy", lecture, decoy)))  # decoys: per lecture
+    g = rng(key, *(("patch", title, seg) if decoy is None else ("patch-decoy", title, decoy)))  # decoys: per title
     W = np.zeros((N_TILES, N_BANDS))
     for group in (np.flatnonzero(_LOW), np.flatnonzero(_HIGH)):
         k = len(group)
@@ -42,7 +42,7 @@ def _flat_top(frac: np.ndarray) -> np.ndarray:
     return 0.5 - 0.5 * np.cos(np.pi * r)
 
 
-def embed(x: np.ndarray, sr: int, margin: float, key: bytes, lecture: str, seg: int, sign: int) -> np.ndarray:
+def embed(x: np.ndarray, sr: int, margin: float, key: bytes, title: str, seg: int, sign: int) -> np.ndarray:
     """Apply all three carriers to the segment in x (which has `margin` seconds of context each side)."""
     m = round(margin * sr)
     n = len(x) - 2 * m
@@ -53,7 +53,7 @@ def embed(x: np.ndarray, sr: int, margin: float, key: bytes, lecture: str, seg: 
     inside = (u > 0) & (u < 1)
 
     # patchwork: tile signs on the STFT grid, flat across each tile with a short crossfade at tile edges
-    W = _pattern(key, lecture, seg)
+    W = _pattern(key, title, seg)
     ti = np.clip(u * N_TILES - 0.5, 0, N_TILES - 1)
     bi = (f - LO_HZ) / BAND_HZ - 0.5
     in_band = (f >= LO_HZ - BAND_HZ / 2) & (f <= HI_HZ + BAND_HZ / 2)
@@ -111,7 +111,7 @@ def _fit_code(v: np.ndarray, u: np.ndarray, w: np.ndarray) -> tuple[float, float
     return float(beta[2]), float(np.sqrt(cov[2, 2]))
 
 
-def measure(leak_spec: np.ndarray, mezz_spec: np.ndarray, key: bytes, lecture: str, seg: int) -> dict:
+def measure(leak_spec: np.ndarray, mezz_spec: np.ndarray, key: bytes, title: str, seg: int) -> dict:
     """Evidence from each audio carrier as (estimate, standard error); estimate / error is a z-score, positive
     for rendition A. Both spectra cover just this segment and are already on the same timeline."""
     n = min(len(leak_spec), len(mezz_spec))
@@ -135,12 +135,12 @@ def measure(leak_spec: np.ndarray, mezz_spec: np.ndarray, key: bytes, lecture: s
     T = sums[valid] / counts[valid]
     T = T - T.mean(axis=0, keepdims=True) - T.mean(axis=1, keepdims=True) + T.mean()
     env = tukey((np.arange(N_TILES) + 0.5) / N_TILES)[valid][:, None]
-    P = _pattern(key, lecture, seg)[valid] * env
+    P = _pattern(key, title, seg)[valid] * env
     stat = float(np.sum(T * P))
     # Noise comes from decoy patterns (keys never embedded) correlated with what's left once the real pattern's
     # fitted contribution is removed; otherwise a strong mark inflates its own noise estimate.
     resid = T - stat / max(float(np.sum(P * P)), 1e-12) * P
-    decoys = np.array([float(np.sum(resid * _pattern(key, lecture, seg, j)[valid] * env)) for j in range(DECOYS)])
+    decoys = np.array([float(np.sum(resid * _pattern(key, title, seg, j)[valid] * env)) for j in range(DECOYS)])
     patch = (stat - decoys.mean(), float(decoys.std(ddof=1)) or float("inf"))
 
     def band_mean(cols):

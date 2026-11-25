@@ -1,17 +1,17 @@
 """HTTP service.
 
 Admin API (Authorization: Bearer LEAKTRACE_ADMIN_TOKEN):
-  POST /api/lectures (multipart: id, title, file)    package a lecture (background job)
-  GET  /api/lectures
-  POST /api/students {"students": [{"id", "name"}]}   GET /api/students
-  POST /api/sessions {"lecture", "student"}           a student's signed playlist and download URLs
+  POST /api/titles (multipart: id, name, file)    package a title (background job)
+  GET  /api/titles
+  POST /api/viewers {"viewers": [{"id", "name"}]}   GET /api/viewers
+  POST /api/sessions {"title", "viewer"}           a viewer's signed playlist and download URLs
   POST /api/traces   (multipart: file, first_seen?)   trace a leak (background job)
   GET  /api/traces   GET /api/traces/{id}   GET /api/jobs/{id}   GET /api/bench/latest
 
-Student-facing (what a platform's player and download button would point at):
-  GET /play/{token}.m3u8   the student's playlist (logged as a view)
+Viewer-facing (what a platform's player and download button would point at):
+  GET /play/{token}.m3u8   the viewer's playlist (logged as a view)
   GET /s/{token}           one segment (the variant is decided here, never visible in the URL)
-  GET /download/{token}    the student's own MP4 (logged as a download)
+  GET /download/{token}    the viewer's own MP4 (logged as a download)
 
 Run: uvicorn leaktrace.server:app --port 8003
 """
@@ -35,12 +35,12 @@ from pydantic import AfterValidator, BaseModel, StringConstraints
 
 from . import deliver
 from .config import ROOT, settings
-from .ingest import ingest, lecture_dir
+from .ingest import ingest, title_dir
 from .jobs import Jobs
 from .store import Store
 
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-STUDENT = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
+VIEWER = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
 MAX_UPLOAD = int(os.getenv("LEAKTRACE_MAX_UPLOAD_MB", "4096")) * 1024 * 1024
 DIST = ROOT / "frontend" / "dist"
 
@@ -78,29 +78,29 @@ Admin = Depends(admin)
 
 
 def _sid(s: str) -> str:
-    if not STUDENT.match(s):
-        raise ValueError("student ids: 1-64 letters, digits, _ . @ -")
+    if not VIEWER.match(s):
+        raise ValueError("viewer ids: 1-64 letters, digits, _ . @ -")
     return s
 
 
-class StudentIn(BaseModel):
+class ViewerIn(BaseModel):
     id: Annotated[str, AfterValidator(_sid)]
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
-class StudentsIn(BaseModel):
-    students: list[StudentIn]
+class ViewersIn(BaseModel):
+    viewers: list[ViewerIn]
 
 
 def _lid(s: str) -> str:
     if not ID.match(s):
-        raise ValueError("lecture ids: lowercase letters, digits and dashes, up to 64")
+        raise ValueError("title ids: lowercase letters, digits and dashes, up to 64")
     return s
 
 
 class SessionIn(BaseModel):
-    lecture: Annotated[str, AfterValidator(_lid)]  # validated: it becomes part of a file path
-    student: Annotated[str, AfterValidator(_sid)]
+    title: Annotated[str, AfterValidator(_lid)]  # validated: it becomes part of a file path
+    viewer: Annotated[str, AfterValidator(_sid)]
 
 
 # signed session tokens for the playlist and download links
@@ -108,8 +108,8 @@ def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
 
-def _session_token(lecture: str, student: str, ttl: int = 6 * 3600) -> str:
-    payload = json.dumps([lecture, student, int(time.time()) + ttl], separators=(",", ":")).encode()
+def _session_token(title: str, viewer: str, ttl: int = 6 * 3600) -> str:
+    payload = json.dumps([title, viewer, int(time.time()) + ttl], separators=(",", ":")).encode()
     sig = hmac.new(settings().secret, b"play\x1f" + payload, hashlib.sha256).digest()[:16]
     return _b64(payload) + "." + _b64(sig)
 
@@ -121,12 +121,12 @@ def _open_session(token: str) -> tuple[str, str]:
         good = hmac.new(settings().secret, b"play\x1f" + payload, hashlib.sha256).digest()[:16]
         if not hmac.compare_digest(base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)), good):
             raise ValueError
-        lecture, student, exp = json.loads(payload)
+        title, viewer, exp = json.loads(payload)
     except Exception:
         raise HTTPException(403, "Invalid link.")
     if exp < time.time():
         raise HTTPException(403, "This link has expired.")
-    return lecture, student
+    return title, viewer
 
 
 def _save_upload(file: UploadFile, folder: str) -> Path:
@@ -151,66 +151,66 @@ def health() -> dict:
     return {"ok": True}
 
 
-@app.get("/api/lectures", dependencies=[Admin])
-def lectures() -> list[dict]:
-    return store().lectures()
+@app.get("/api/titles", dependencies=[Admin])
+def titles() -> list[dict]:
+    return store().titles()
 
 
-@app.post("/api/lectures", dependencies=[Admin])
-def add_lecture(id: Annotated[str, Form()], title: Annotated[str, Form()], file: Annotated[UploadFile, File()]) -> dict:
+@app.post("/api/titles", dependencies=[Admin])
+def add_title(id: Annotated[str, Form()], name: Annotated[str, Form()], file: Annotated[UploadFile, File()]) -> dict:
     if not ID.match(id):
-        raise HTTPException(422, "Lecture ids: lowercase letters, digits and dashes, up to 64.")
-    if not title.strip():
-        raise HTTPException(422, "A title is required.")
-    existing = store().lecture(id)
-    if (existing and existing["status"] != "failed") or (lecture_dir(id) / "meta.json").exists():
+        raise HTTPException(422, "Title ids: lowercase letters, digits and dashes, up to 64.")
+    if not name.strip():
+        raise HTTPException(422, "A name is required.")
+    existing = store().title(id)
+    if (existing and existing["status"] != "failed") or (title_dir(id) / "meta.json").exists():
         # Viewers already hold copies of it; replacing it would make their leaks untraceable.
-        raise HTTPException(409, "A lecture with this id already exists. Pick another id.")
+        raise HTTPException(409, "A title with this id already exists. Pick another id.")
     path = _save_upload(file, "masters")
-    store().add_lecture(id, title.strip(), "processing")
+    store().add_title(id, name.strip(), "processing")
     preset = os.getenv("LEAKTRACE_PRESET", "medium")
 
     def run(progress):
         try:
-            meta = ingest(path, id, title.strip(), progress=progress, preset=preset)
+            meta = ingest(path, id, name.strip(), progress=progress, preset=preset)
         except Exception:
-            store().set_lecture(id, "failed")
+            store().set_title(id, "failed")
             raise
-        store().set_lecture(id, "ready", {"duration": meta.duration, "segments": meta.n_segments,
+        store().set_title(id, "ready", {"duration": meta.duration, "segments": meta.n_segments,
                                           "marked": meta.marked_segments, "has_audio": meta.has_audio})
-        return {"lecture": id}
+        return {"title": id}
 
-    return {"job": jobs().submit("ingest", run, {"lecture": id})}
-
-
-@app.get("/api/students", dependencies=[Admin])
-def students() -> list[dict]:
-    return store().students()
+    return {"job": jobs().submit("ingest", run, {"title": id})}
 
 
-@app.post("/api/students", dependencies=[Admin])
-def add_students(body: StudentsIn) -> dict:
-    for s in body.students:
-        store().add_student(s.id, s.name)
-    return {"added": len(body.students)}
+@app.get("/api/viewers", dependencies=[Admin])
+def viewers() -> list[dict]:
+    return store().viewers()
+
+
+@app.post("/api/viewers", dependencies=[Admin])
+def add_viewers(body: ViewersIn) -> dict:
+    for s in body.viewers:
+        store().add_viewer(s.id, s.name)
+    return {"added": len(body.viewers)}
 
 
 @app.post("/api/sessions", dependencies=[Admin])
 def session(body: SessionIn) -> dict:
-    if not (lecture_dir(body.lecture) / "meta.json").exists():  # packaged files are the truth (API or CLI)
-        raise HTTPException(404, "No such lecture (or it isn't packaged yet).")
-    if body.student not in set(store().student_ids()):
-        raise HTTPException(404, "No such student.")
-    token = _session_token(body.lecture, body.student)
+    if not (title_dir(body.title) / "meta.json").exists():  # packaged files are the truth (API or CLI)
+        raise HTTPException(404, "No such title (or it isn't packaged yet).")
+    if body.viewer not in set(store().viewer_ids()):
+        raise HTTPException(404, "No such viewer.")
+    token = _session_token(body.title, body.viewer)
     # Relative links: right behind any proxy or CDN, whatever host and scheme the viewer reached us on.
     return {"playlist": f"/play/{token}.m3u8", "download": f"/download/{token}"}
 
 
 @app.get("/play/{token}.m3u8")
 def play(token: str) -> PlainTextResponse:
-    lecture, student = _open_session(token)
-    store().log_view(student, lecture, "play")
-    text = deliver.playlist(lecture, student, "")
+    title, viewer = _open_session(token)
+    store().log_view(viewer, title, "play")
+    text = deliver.playlist(title, viewer, "")
     return PlainTextResponse(text, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "no-store"})
 
 
@@ -221,7 +221,7 @@ def segment(token: str) -> FileResponse:
     except deliver.TokenError:
         raise HTTPException(403, "Invalid segment link.")
     except FileNotFoundError:
-        raise HTTPException(404, "No such lecture.")
+        raise HTTPException(404, "No such title.")
     if not path.exists():
         raise HTTPException(404, "Segment missing.")
     return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "private, max-age=3600"})
@@ -229,10 +229,10 @@ def segment(token: str) -> FileResponse:
 
 @app.get("/download/{token}")
 def download(token: str) -> FileResponse:
-    lecture, student = _open_session(token)
-    store().log_view(student, lecture, "download")
-    path = deliver.export(lecture, student)
-    return FileResponse(path, media_type="video/mp4", filename=f"{lecture}.mp4")
+    title, viewer = _open_session(token)
+    store().log_view(viewer, title, "download")
+    path = deliver.export(title, viewer)
+    return FileResponse(path, media_type="video/mp4", filename=f"{title}.mp4")
 
 
 @app.post("/api/traces", dependencies=[Admin])
@@ -275,7 +275,7 @@ def get_job(jid: str) -> dict:
 def bench_latest() -> dict:
     p = settings().data / "bench" / "latest.json"
     if not p.exists():
-        raise HTTPException(404, "No bench results yet. Run: python -m leaktrace bench <lecture>")
+        raise HTTPException(404, "No bench results yet. Run: python -m leaktrace bench <title>")
     return json.loads(p.read_text())
 
 

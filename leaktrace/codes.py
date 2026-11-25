@@ -1,15 +1,15 @@
 """Who gets rendition A and who gets B for each segment, and how a leak's evidence points back to an account.
 
-Codes are a Tardos code with cutoff t = 0.1: segment i of lecture L has a secret bias p_i in [t, 1 - t] drawn
-from the arcsine distribution, and a student's bit is 1 (rendition A) with probability p_i. Everything is
-derived from the secret key, so nothing is stored per student. Biased codes keep pointing at a member of a small
+Codes are a Tardos code with cutoff t = 0.1: segment i of title L has a secret bias p_i in [t, 1 - t] drawn
+from the arcsine distribution, and a viewer's bit is 1 (rendition A) with probability p_i. Everything is
+derived from the secret key, so nothing is stored per viewer. Biased codes keep pointing at a member of a small
 group that mixes their copies segment by segment, which a plain 50/50 code doesn't.
 
 Scoring is Skoric's symmetric Tardos score with soft observations y_i in [-1, 1] (0 = segment not seen):
-    term_i = y_i * sqrt((1 - p) / p)  if the student's bit is 1
-    term_i = -y_i * sqrt(p / (1 - p)) if the student's bit is 0
-For an innocent student every term has mean 0 and variance y_i^2, so z = score / sqrt(sum y_i^2) is standard
-normal; a leaker averages about 0.86 per clean segment. The null is checked by simulating innocent students.
+    term_i = y_i * sqrt((1 - p) / p)  if the viewer's bit is 1
+    term_i = -y_i * sqrt(p / (1 - p)) if the viewer's bit is 0
+For an innocent viewer every term has mean 0 and variance y_i^2, so z = score / sqrt(sum y_i^2) is standard
+normal; a leaker averages about 0.86 per clean segment. The null is checked by simulating innocent viewers.
 """
 import hashlib
 import hmac
@@ -30,16 +30,16 @@ def _rng(key: bytes, *parts: str) -> np.random.Generator:
     return np.random.Generator(np.random.Philox(key=int.from_bytes(digest[:16], "big")))
 
 
-def bias(key: bytes, lecture: str, n: int) -> np.ndarray:
+def bias(key: bytes, title: str, n: int) -> np.ndarray:
     t = BUDGET.bias_cutoff
     lo, hi = math.asin(math.sqrt(t)), math.asin(math.sqrt(1 - t))
-    u = _rng(key, "bias", lecture).random(n)
+    u = _rng(key, "bias", title).random(n)
     return np.sin(lo + u * (hi - lo)) ** 2
 
 
-def codeword(key: bytes, lecture: str, student: str, n: int, p: np.ndarray | None = None) -> np.ndarray:
-    """True = rendition A for that segment. Pass p (this lecture's biases) to skip recomputing them."""
-    return _rng(key, "bit", lecture, student).random(n) < (bias(key, lecture, n) if p is None else p)
+def codeword(key: bytes, title: str, viewer: str, n: int, p: np.ndarray | None = None) -> np.ndarray:
+    """True = rendition A for that segment. Pass p (this title's biases) to skip recomputing them."""
+    return _rng(key, "bit", title, viewer).random(n) < (bias(key, title, n) if p is None else p)
 
 
 def _weights(code: np.ndarray, p: np.ndarray) -> np.ndarray:
@@ -52,7 +52,7 @@ def score(y: np.ndarray, code: np.ndarray, p: np.ndarray) -> float:
 
 @dataclass
 class Suspect:
-    student: str
+    viewer: str
     z: float
     p: float
     p_family: float
@@ -63,7 +63,7 @@ class Suspect:
 
 
 def chernoff_tail(s: float, y: np.ndarray, p: np.ndarray) -> float:
-    """A guaranteed upper bound on the chance that an innocent student scores s or more:
+    """A guaranteed upper bound on the chance that an innocent viewer scores s or more:
     P(S >= s) <= min over lambda > 0 of exp(-lambda s) * prod_i E[exp(lambda * term_i)], where each term is
     y_i * sqrt((1-p)/p) with probability p and -y_i * sqrt(p/(1-p)) otherwise. Exact for any number of segments,
     no normal approximation: this is the number a false accusation is bounded by."""
@@ -78,7 +78,7 @@ def chernoff_tail(s: float, y: np.ndarray, p: np.ndarray) -> float:
 
 
 def null_scores(y: np.ndarray, p: np.ndarray, n_null: int = 20_000, chunk: int = 2_000) -> np.ndarray:
-    """Scores of simulated innocent students (independent codes with the same biases)."""
+    """Scores of simulated innocent viewers (independent codes with the same biases)."""
     rng = np.random.default_rng(0)
     out = []
     for start in range(0, n_null, chunk):
@@ -87,13 +87,13 @@ def null_scores(y: np.ndarray, p: np.ndarray, n_null: int = 20_000, chunk: int =
     return np.concatenate(out)
 
 
-def accuse(key: bytes, lecture: str, y: np.ndarray, candidates: list[str], n_null: int = 20_000,
+def accuse(key: bytes, title: str, y: np.ndarray, candidates: list[str], n_null: int = 20_000,
            tries: int = 1) -> list[Suspect]:
     """Every candidate ranked by evidence, with a family-wise false-accusation bound and a verdict. `tries`: how
     many readings of the leak were looked at to pick this one (the bound is widened by that factor)."""
     y = np.asarray(y, dtype=np.float64)
     seen = np.flatnonzero(y)
-    p_all = bias(key, lecture, len(y))
+    p_all = bias(key, title, len(y))
     p = p_all[seen]
     ys = y[seen]
     energy = math.sqrt(float(np.sum(ys ** 2)))
@@ -104,7 +104,7 @@ def accuse(key: bytes, lecture: str, y: np.ndarray, candidates: list[str], n_nul
     n = len(candidates) * max(1, tries)
     out = []
     for s in candidates:
-        raw = score(ys, codeword(key, lecture, s, len(y), p_all)[seen], p)
+        raw = score(ys, codeword(key, title, s, len(y), p_all)[seen], p)
         z = (raw / energy - mu) / sd
         # Anyone with a real chance of a verdict gets the exact bound; the rest only need a ranking.
         pv = chernoff_tail(raw, ys, p) if z > 2 else float(norm.sf(z))

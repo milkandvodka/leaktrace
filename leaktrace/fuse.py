@@ -4,7 +4,7 @@ Each carrier gives a z-score per segment (positive = rendition A). How much each
 per leak: a phone recording kills fine picture detail but keeps timing; a muted clip has no audio at all. Weights
 therefore come from the leak itself: a carrier's weight is how strongly it agrees, on average, with what all the
 OTHER carriers say (leave-one-out, so a carrier can't vote for itself). Carriers that agree get weight; ones that
-carry nothing get ~0. None of this looks at any student's codeword, so the accusation's innocent null stays valid.
+carry nothing get ~0. None of this looks at any viewer's codeword, so the accusation's innocent null stays valid.
 """
 import numpy as np
 

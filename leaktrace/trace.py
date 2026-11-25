@@ -1,12 +1,12 @@
 """Tracing a leaked file back to an account.
 
-1. Locate it: which lecture, offset, speed (audio landmarks; video keyframes for muted clips).
+1. Locate it: which title, offset, speed (audio landmarks; video keyframes for muted clips).
 2. For every marked segment the clip fully covers:
    - timing: shifts measured against the unmarked master in 8 windows; their average also fine-aligns the rest;
    - audio: log band energies of leak vs master, on the rendition's own timeline;
    - picture: leak frames registered onto the master (ORB + homography) and compared at 320x180.
 3. Fuse the nine carriers into one soft bit per segment, weighted by how well each agrees with the others.
-4. Score every candidate (students who opened the lecture before the leak was first seen) with the Tardos
+4. Score every candidate (viewers who opened the title before the leak was first seen) with the Tardos
    score against simulated innocents; report a verdict only as strong as the family-wise bound allows.
 """
 import os
@@ -26,7 +26,7 @@ from .carriers import timing as tcar
 from .codes import accuse
 from .config import FPS, HEIGHT, SEG_FRAMES, SEG_SECONDS, WIDTH, settings
 from .fuse import CARRIERS, fuse
-from .ingest import MARGIN, LectureMeta
+from .ingest import MARGIN, TitleMeta
 from .locate import Location, locate_all
 from .store import Store, now
 
@@ -43,7 +43,7 @@ class TraceReport:
     leak: str
     created: str
     verdict: str                      # identified | narrowed | inconclusive | not_ours | no_candidates
-    lecture: dict | None = None       # id, title
+    title: dict | None = None       # id, name
     location: dict | None = None
     segments_used: int = 0
     carriers: dict = field(default_factory=dict)   # name -> {"weight", "mean_z"}
@@ -98,9 +98,10 @@ def _spec_pos(t: np.ndarray) -> np.ndarray:  # time -> fractional index into aud
     return (t - acar.SPEC_WIN_S / 2) / acar.SPEC_HOP_S
 
 
-def _notice(meta: LectureMeta, loc: Location, leak_name: str) -> str:
+def _notice(meta: TitleMeta, loc: Location, leak_name: str) -> str:
     start, end = loc.offset, loc.offset + loc.speed * loc.duration
-    return (f"Copyright notice\n\nThe video \"{leak_name}\" reproduces our copyrighted lecture \"{meta.title}\" "
+    owner = f"{org}'s" if (org := os.getenv("LEAKTRACE_ORG", "").strip()) else "our"
+    return (f"Copyright notice\n\nThe video \"{leak_name}\" reproduces {owner} copyrighted title \"{meta.name}\" "
             f"(from {start:.0f} s to {end:.0f} s of the original) without permission. It was distributed from an "
             f"account licensed only for personal viewing, identified through forensic marks in the copy. "
             f"Please remove it and any copies.\n")
@@ -155,11 +156,11 @@ def _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_sp
     return z, None
 
 
-def _picture(leak_frames, mezz_frames, H, valid, t_fracs, key, lecture, seg, box) -> dict:
+def _picture(leak_frames, mezz_frames, H, valid, t_fracs, key, title, seg, box) -> dict:
     """The picture carriers of one segment; runs on a worker thread (numpy and OpenCV release the GIL)."""
     la = [pcar.warp(pcar.to_analysis(f), H) for f in leak_frames]
     ma = [pcar.to_analysis(f) for f in mezz_frames]
-    return pcar.measure(la, ma, t_fracs, valid, key, lecture, seg, box)
+    return pcar.measure(la, ma, t_fracs, valid, key, title, seg, box)
 
 
 def _collect(pending: deque, z_rows: dict) -> None:
@@ -168,15 +169,15 @@ def _collect(pending: deque, z_rows: dict) -> None:
         z_rows[i][CARRIERS.index(name)] = est / se if np.isfinite(se) else 0.0
 
 
-def _lecture_folders() -> list[Path]:
-    root = settings().data / "lectures"
+def _title_folders() -> list[Path]:
+    root = settings().data / "titles"
     return sorted(p for p in root.iterdir() if p.is_dir() and not p.name.endswith(".partial")) if root.exists() else []
 
 
-def _read(leak: Path, meta: LectureMeta, loc: Location, key: bytes, segs: list[int], audio_feats: tuple,
+def _read(leak: Path, meta: TitleMeta, loc: Location, key: bytes, segs: list[int], audio_feats: tuple,
           has_audio: bool, has_video: bool, z_rows: dict, tick: Callable[[], None]) -> None:
     """Measure every carrier on the given segments of the leak, read at this location, into z_rows."""
-    mezz = settings().data / "lectures" / meta.id / "mezzanine.mp4"
+    mezz = settings().data / "titles" / meta.id / "mezzanine.mp4"
     lf = _Frames(media.frames(leak, WIDTH, HEIGHT, FPS)) if has_video else None
     mf = _Frames(media.frames(mezz, WIDTH, HEIGHT, FPS)) if has_video else None
     state: dict = {}
@@ -203,19 +204,19 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
           progress: Callable[[float], None] | None = None) -> TraceReport:
     leak = Path(leak)
     report = TraceReport(id=uuid.uuid4().hex[:12], leak=leak.name, created=now(), verdict="not_ours")
-    locs = [l for l in locate_all(leak, _lecture_folders()) if l.segments]
+    locs = [l for l in locate_all(leak, _title_folders()) if l.segments]
     if not locs:
         store.add_trace(report.id, None, report.verdict, report.as_dict())
         return report
-    meta = LectureMeta.load(settings().data / "lectures" / locs[0].lecture_id)
+    meta = TitleMeta.load(settings().data / "titles" / locs[0].title_id)
     key = settings().secret
-    report.lecture = {"id": meta.id, "title": meta.title}
+    report.title = {"id": meta.id, "name": meta.name}
 
     p = media.probe(leak)
     has_audio, has_video = p.has_audio, p.has_video
     feats = (None, None, None, None)
     if has_audio and meta.has_audio:
-        leak_audio, mezz_audio = media.audio(leak, AUDIO_SR), media.audio(settings().data / "lectures" / meta.id / "mezzanine.mp4", AUDIO_SR)
+        leak_audio, mezz_audio = media.audio(leak, AUDIO_SR), media.audio(settings().data / "titles" / meta.id / "mezzanine.mp4", AUDIO_SR)
         feats = (tcar.features(leak_audio, AUDIO_SR), tcar.features(mezz_audio, AUDIO_SR),
                  acar.spec(leak_audio, AUDIO_SR), acar.spec(mezz_audio, AUDIO_SR))
 
@@ -227,7 +228,7 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
         if progress:
             progress(0.95 * min(1.0, done[0] / total))
 
-    # The clip matches several places equally (the lecture repeats itself): the marks only read at the true one.
+    # The clip matches several places equally (the title repeats itself): the marks only read at the true one.
     z_rows: dict[int, np.ndarray] = {}
     loc = locs[0]
     if len(locs) > 1:
@@ -246,7 +247,7 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
     if len(segs) > QUICK_SEGMENTS:
         passes.append([s for s in segs if s not in set(passes[0])])
 
-    pool = candidates if candidates is not None else (store.viewers(meta.id, before=first_seen) or store.student_ids())
+    pool = candidates if candidates is not None else (store.watched_by(meta.id, before=first_seen) or store.viewer_ids())
     report.candidates = len(pool)
     for pass_segs in passes:
         _read(leak, meta, loc, key, pass_segs, feats, has_audio, has_video, z_rows, tick)
@@ -258,7 +259,7 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
     return report
 
 
-def _summarise(report: TraceReport, meta: LectureMeta, key: bytes, z_rows: dict, pool: list[str], tries: int = 1) -> bool:
+def _summarise(report: TraceReport, meta: TitleMeta, key: bytes, z_rows: dict, pool: list[str], tries: int = 1) -> bool:
     """Fill the report from the segments read so far; True when the verdict can't get any better."""
     segs = sorted(z_rows)
     Z = np.stack([z_rows[s] for s in segs])
@@ -274,7 +275,7 @@ def _summarise(report: TraceReport, meta: LectureMeta, key: bytes, z_rows: dict,
         return False
     suspects = accuse(key, meta.id, y, pool, tries=tries)  # each place tried is one more chance of a fluke
     report.suspects = [s.as_dict() for s in suspects[:10]]
-    identified = [s.student for s in suspects if s.verdict == "identified"]
+    identified = [s.viewer for s in suspects if s.verdict == "identified"]
     report.coalition = identified if len(identified) > 1 else []
     report.verdict = suspects[0].verdict
     if report.verdict != "inconclusive" and report.location:

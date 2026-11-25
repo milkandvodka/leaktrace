@@ -1,4 +1,4 @@
-"""Packaging: one master lecture in, two marked renditions (A and B) out, plus what tracing needs later.
+"""Packaging: one master title in, two marked renditions (A and B) out, plus what tracing needs later.
 
 Per 1.92 s segment, streaming:
 1. Warp the audio both ways (timing carrier) and measure the shifts each warp really produced.
@@ -7,7 +7,7 @@ Per 1.92 s segment, streaming:
 4. Feed both encoders.
 
 The final partial segment is left unmarked. Everything is written to a `.partial` folder and moved into place
-only when it's complete, so a crash never leaves a half-packaged lecture that looks finished.
+only when it's complete, so a crash never leaves a half-packaged title that looks finished.
 """
 import json
 import math
@@ -32,9 +32,9 @@ VERSION = 1
 
 
 @dataclass
-class LectureMeta:
+class TitleMeta:
     id: str
-    title: str
+    name: str
     duration: float
     n_frames: int
     n_segments: int
@@ -50,7 +50,7 @@ class LectureMeta:
         (folder / "meta.json").write_text(json.dumps(asdict(self)), encoding="utf-8")
 
     @classmethod
-    def load(cls, folder: Path) -> "LectureMeta":
+    def load(cls, folder: Path) -> "TitleMeta":
         return cls(**json.loads((folder / "meta.json").read_text(encoding="utf-8")))
 
     def real_shifts(self, seg: int) -> np.ndarray | None:
@@ -58,8 +58,8 @@ class LectureMeta:
         return None if t is None else np.array([[np.nan if v is None else v for v in row] for row in t], np.float64)
 
 
-def lecture_dir(lecture_id: str) -> Path:
-    return settings().data / "lectures" / lecture_id
+def title_dir(title_id: str) -> Path:
+    return settings().data / "titles" / title_id
 
 
 def _mezzanine(master: Path, out: Path, has_audio: bool, preset: str) -> None:
@@ -74,19 +74,19 @@ def _shifts_json(real: np.ndarray) -> list:
     return [[None if np.isnan(v) else round(float(v), 6) for v in row] for row in real]
 
 
-def _mark_pair(chunk, map_a, map_b, k, box, key, lecture_id, seg):
+def _mark_pair(chunk, map_a, map_b, k, box, key, title_id, seg):
     """Frame k of a segment for A and for B. When both show the same source frame (most of the time) the
     change is computed once and applied with opposite signs."""
     t = (k + 0.5) / SEG_FRAMES
-    da = pcar.delta(chunk[map_a[k]], t, box, key, lecture_id, seg)
-    db = da if map_a[k] == map_b[k] else pcar.delta(chunk[map_b[k]], t, box, key, lecture_id, seg)
+    da = pcar.delta(chunk[map_a[k]], t, box, key, title_id, seg)
+    db = da if map_a[k] == map_b[k] else pcar.delta(chunk[map_b[k]], t, box, key, title_id, seg)
     return pcar.apply(chunk[map_a[k]], da, +1), pcar.apply(chunk[map_b[k]], db, -1)
 
 
-def ingest(master: Path, lecture_id: str, title: str, progress: Callable[[float], None] | None = None,
-           preset: str = "medium") -> LectureMeta:
+def ingest(master: Path, title_id: str, name: str, progress: Callable[[float], None] | None = None,
+           preset: str = "medium") -> TitleMeta:
     key = settings().secret
-    final = lecture_dir(lecture_id)
+    final = title_dir(title_id)
     work = final.with_name(final.name + ".partial")
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
@@ -107,7 +107,7 @@ def ingest(master: Path, lecture_id: str, title: str, progress: Callable[[float]
     timing_meta, n_frames, seg, marked = [], 0, 0, 0
     enc_a = media.Encoder(work / "A", with_audio=p.has_audio, preset=preset)
     enc_b = media.Encoder(work / "B", with_audio=p.has_audio, preset=preset)
-    # ponytail: one process, threads per frame (~37 min per hour of lecture on 16 cores); split segments across
+    # ponytail: one process, threads per frame (~37 min per hour of title on 16 cores); split segments across
     # processes if packaging throughput ever matters more than simplicity.
     pool = ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4))  # numpy and OpenCV release the GIL
     try:
@@ -122,15 +122,15 @@ def ingest(master: Path, lecture_id: str, title: str, progress: Callable[[float]
                     disp = tcar.template(cur, SR)
                     wa, wb = tcar.warp_audio(x, SR, MARGIN, disp, +1), tcar.warp_audio(x, SR, MARGIN, disp, -1)
                     timing_meta.append(_shifts_json(tcar.realized(x, wa, wb, SR, MARGIN)))
-                    aud_a = acar.embed(np.concatenate([before, wa, nxt[:m]]), SR, MARGIN, key, lecture_id, seg, +1)
-                    aud_b = acar.embed(np.concatenate([before, wb, nxt[:m]]), SR, MARGIN, key, lecture_id, seg, -1)
+                    aud_a = acar.embed(np.concatenate([before, wa, nxt[:m]]), SR, MARGIN, key, title_id, seg, +1)
+                    aud_b = acar.embed(np.concatenate([before, wb, nxt[:m]]), SR, MARGIN, key, title_id, seg, -1)
                     map_a, map_b = tcar.frame_map(disp, +1), tcar.frame_map(disp, -1)
                 else:
                     timing_meta.append(None)
                     aud_a = aud_b = None
                     map_a = map_b = np.arange(SEG_FRAMES)
-                pcar.prepare(box, key, lecture_id, seg)  # patterns once, here, not raced by every worker
-                for fa, fb in pool.map(lambda k: _mark_pair(chunk, map_a, map_b, k, box, key, lecture_id, seg),
+                pcar.prepare(box, key, title_id, seg)  # patterns once, here, not raced by every worker
+                for fa, fb in pool.map(lambda k: _mark_pair(chunk, map_a, map_b, k, box, key, title_id, seg),
                                        range(SEG_FRAMES)):
                     enc_a.write_frame(fa)
                     enc_b.write_frame(fb)
@@ -162,12 +162,12 @@ def ingest(master: Path, lecture_id: str, title: str, progress: Callable[[float]
         reader.close()
         frames.close()
 
-    meta = LectureMeta(id=lecture_id, title=title, duration=n_frames / FPS, n_frames=n_frames, n_segments=seg,
+    meta = TitleMeta(id=title_id, name=name, duration=n_frames / FPS, n_frames=n_frames, n_segments=seg,
                        marked_segments=marked, box=box, has_audio=p.has_audio, timing=timing_meta,
                        budget=asdict(BUDGET), created=now())
     meta.save(work)
     try:
-        from . import index  # built here when available, so a packaged lecture is immediately traceable
+        from . import index  # built here when available, so a packaged title is immediately traceable
         index.build(work)
     except ImportError:
         pass

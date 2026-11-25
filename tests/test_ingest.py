@@ -9,14 +9,14 @@ from leaktrace import media
 from leaktrace.config import HEIGHT, SEG_FRAMES, WIDTH
 from leaktrace.ingest import ingest
 from leaktrace.store import Store
-from leaktrace.synth import make_lecture
+from leaktrace.synth import make_title
 
 
 @pytest.fixture(scope="module")
 def short_master():
-    out = CACHE / "lecture_5p5s.mp4"  # 2 full segments + a partial one
+    out = CACHE / "title_5p5s.mp4"  # 2 full segments + a partial one
     if not out.exists():
-        make_lecture(out, seconds=5.5, seed=3, tts=False)
+        make_title(out, seconds=5.5, seed=3, tts=False)
     return out
 
 
@@ -25,8 +25,8 @@ def ingested(short_master, tmp_path_factory):
     import os
     data = tmp_path_factory.mktemp("data")
     os.environ["LEAKTRACE_DATA"] = str(data)
-    meta = ingest(short_master, "lec-short", "Short lecture", preset="veryfast")
-    return data / "lectures" / "lec-short", meta
+    meta = ingest(short_master, "lec-short", "Short title", preset="veryfast")
+    return data / "titles" / "lec-short", meta
 
 
 def _segments(d):
@@ -77,7 +77,7 @@ def test_silent_master_ingests_picture_only(short_master, tmp_path, monkeypatch)
     muted = tmp_path / "muted.mp4"
     media.run(["-i", short_master, "-an", "-c:v", "copy", muted])
     meta = ingest(muted, "lec-muted", "Muted", preset="veryfast")
-    d = tmp_path / "lectures" / "lec-muted"
+    d = tmp_path / "titles" / "lec-muted"
     assert not meta.has_audio and meta.marked_segments >= 1 and meta.timing[0] is None
     assert not media.probe(d / "A" / "00000.ts").has_audio
     assert (d / "A" / "00000.ts").read_bytes() != (d / "B" / "00000.ts").read_bytes()
@@ -85,11 +85,11 @@ def test_silent_master_ingests_picture_only(short_master, tmp_path, monkeypatch)
 
 def test_store_views_and_viewers(tmp_path):
     s = Store(tmp_path / "db.sqlite")
-    s.add_student("s1", "Asha")
-    s.add_student("s2", "Ravi")
+    s.add_viewer("s1", "Asha")
+    s.add_viewer("s2", "Ravi")
     s.log_view("s1", "lec", "play", at="2026-11-20T10:00:00")
     s.log_view("s2", "lec", "download", at="2026-11-22T10:00:00")
     s.log_view("s1", "other", "play", at="2026-11-20T10:00:00")
-    assert s.viewers("lec") == ["s1", "s2"]
-    assert s.viewers("lec", before="2026-11-21T00:00:00") == ["s1"]
-    assert [x["id"] for x in s.students()] == ["s1", "s2"]
+    assert s.watched_by("lec") == ["s1", "s2"]
+    assert s.watched_by("lec", before="2026-11-21T00:00:00") == ["s1"]
+    assert [x["id"] for x in s.viewers()] == ["s1", "s2"]

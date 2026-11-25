@@ -20,12 +20,12 @@ def ffprobe(path: Path) -> dict:
 
 
 @pytest.fixture(scope="session")
-def lecture_40s() -> Path:
-    from leaktrace.synth import make_lecture
-    out = CACHE / "lecture_40s.mp4"
+def title_40s() -> Path:
+    from leaktrace.synth import make_title
+    out = CACHE / "title_40s.mp4"
     if not out.exists():
         CACHE.mkdir(parents=True, exist_ok=True)
-        make_lecture(out, seconds=40, seed=1, tts=False)
+        make_title(out, seconds=40, seed=1, tts=False)
     return out
 
 
@@ -36,7 +36,7 @@ def data_dir(tmp_path, monkeypatch) -> Path:
 
 
 def _code_hash() -> str:
-    """Changes whenever the marking code changes, so a cached packaged lecture is never stale."""
+    """Changes whenever the marking code changes, so a cached packaged title is never stale."""
     import hashlib
     h = hashlib.sha256()
     for p in sorted((ROOT / "leaktrace").rglob("*.py")):
@@ -46,23 +46,23 @@ def _code_hash() -> str:
 
 
 @pytest.fixture(scope="session")
-def packaged(lecture_40s):
-    """lecture_40s packaged as 'lec40' in a cached data folder: (data dir, LectureMeta)."""
-    from leaktrace.ingest import LectureMeta, ingest
+def packaged(title_40s):
+    """title_40s packaged as 'lec40' in a cached data folder: (data dir, TitleMeta)."""
+    from leaktrace.ingest import TitleMeta, ingest
     data = CACHE / f"data-{_code_hash()}"
-    folder = data / "lectures" / "lec40"
+    folder = data / "titles" / "lec40"
     os.environ["LEAKTRACE_DATA"] = str(data)
     if not (folder / "meta.json").exists():
-        ingest(lecture_40s, "lec40", "Test lecture", preset="veryfast")
-    return data, LectureMeta.load(folder)
+        ingest(title_40s, "lec40", "Test title", preset="veryfast")
+    return data, TitleMeta.load(folder)
 
 
 @pytest.fixture(scope="session")
 def rendition_a(packaged) -> Path:
-    """Rendition A of lec40 as one MP4 (what a student with an all-A codeword would download)."""
+    """Rendition A of lec40 as one MP4 (what a viewer with an all-A codeword would download)."""
     from leaktrace import media
     data, _ = packaged
     out = data / "allA.mp4"
     if not out.exists():
-        media.run(["-i", data / "lectures" / "lec40" / "A" / "index.m3u8", "-c", "copy", out])
+        media.run(["-i", data / "titles" / "lec40" / "A" / "index.m3u8", "-c", "copy", out])
     return out

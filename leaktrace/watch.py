@@ -58,8 +58,8 @@ class Watcher:
         return report
 
     def _notify(self, msg: Message, report) -> None:
-        body = json.dumps({"post": msg.link, "verdict": report.verdict, "lecture": report.lecture,
-                           "account": report.suspects[0]["student"] if report.suspects else None,
+        body = json.dumps({"post": msg.link, "verdict": report.verdict, "title": report.title,
+                           "account": report.suspects[0]["viewer"] if report.suspects else None,
                            "trace": report.id}).encode()
         req = urllib.request.Request(self.webhook, data=body, headers={"Content-Type": "application/json"})
         try:

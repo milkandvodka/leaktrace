@@ -35,16 +35,16 @@ export function Report({ r, names }: { r: R; names: Record<string, string> }) {
   const top = r.suspects[0];
   const who = (id: string) => (names[id] ? `${names[id]} (${id})` : id);
   const banner = {
-    identified: { Icon: ShieldAlert, tone: "border-brand-300 bg-brand-50", title: `Leaked from ${top ? who(top.student) : "?"}`,
+    identified: { Icon: ShieldAlert, tone: "border-brand-300 bg-brand-50", title: `Leaked from ${top ? who(top.viewer) : "?"}`,
       text: `Chance this is the wrong account: ${top ? odds(top.p_family) : "-"}.` },
-    narrowed: { Icon: CircleHelp, tone: "border-warn-200 bg-warn-50", title: `Most likely ${top ? who(top.student) : "?"}`,
+    narrowed: { Icon: CircleHelp, tone: "border-warn-200 bg-warn-50", title: `Most likely ${top ? who(top.viewer) : "?"}`,
       text: "The evidence points here but isn't strong enough to name one account. A longer piece of the video would settle it." },
     inconclusive: { Icon: CircleHelp, tone: "border-line bg-white", title: "Not enough to tell",
       text: "This clip is too short or too damaged to point at one account. Nobody is accused." },
-    not_ours: { Icon: SearchX, tone: "border-line bg-white", title: "This isn't one of your lectures",
-      text: "No lecture in the library matches its sound or picture." },
-    no_candidates: { Icon: UserX, tone: "border-line bg-white", title: "Nobody has opened this lecture",
-      text: "There's no student to compare against yet." },
+    not_ours: { Icon: SearchX, tone: "border-line bg-white", title: "This isn't one of your titles",
+      text: "No title in the library matches its sound or picture." },
+    no_candidates: { Icon: UserX, tone: "border-line bg-white", title: "Nobody has opened this title",
+      text: "There's no viewer to compare against yet." },
   }[r.verdict];
 
   return (
@@ -60,12 +60,12 @@ export function Report({ r, names }: { r: R; names: Record<string, string> }) {
         </div>
       </div>
 
-      {r.lecture && r.location && (
+      {r.title && r.location && (
         <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
           <div className="card p-5">
             <h3 className="font-semibold text-ink">What was leaked</h3>
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[14px]">
-              <dt className="text-muted">Lecture</dt><dd className="text-ink font-medium">{r.lecture.title}</dd>
+              <dt className="text-muted">Title</dt><dd className="text-ink font-medium">{r.title.name}</dd>
               <dt className="text-muted">Part</dt><dd>{mmss(r.location.offset)} to {mmss(r.location.offset + r.location.speed * r.location.duration)}</dd>
               {Math.abs(r.location.speed - 1) > 0.02 && (<><dt className="text-muted">Speed</dt><dd>{r.location.speed.toFixed(2)}x</dd></>)}
               <dt className="text-muted">Found by</dt><dd>{r.location.via === "audio" ? "its sound" : "its picture (no sound)"}</dd>
@@ -99,8 +99,8 @@ export function Report({ r, names }: { r: R; names: Record<string, string> }) {
             <thead><tr className="text-left text-muted text-[12.5px]"><th className="px-5 py-2 font-medium">Account</th><th className="px-3 py-2 font-medium">Evidence score</th><th className="px-5 py-2 font-medium">Chance it's wrong</th></tr></thead>
             <tbody>
               {r.suspects.slice(0, 5).map((s, i) => (
-                <tr key={s.student} className="border-t border-line">
-                  <td className="px-5 py-2.5 text-ink font-medium">{i === 0 && s.verdict === "identified" && <Check size={14} className="inline mr-1.5 text-brand-700" />}{who(s.student)}</td>
+                <tr key={s.viewer} className="border-t border-line">
+                  <td className="px-5 py-2.5 text-ink font-medium">{i === 0 && s.verdict === "identified" && <Check size={14} className="inline mr-1.5 text-brand-700" />}{who(s.viewer)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{s.z.toFixed(1)}</td>
                   <td className="px-5 py-2.5 text-muted">{s.p_family >= 0.5 ? "likely wrong" : odds(s.p_family)}</td>
                 </tr>

@@ -22,7 +22,7 @@ def test_playlist_follows_codeword(packaged):
         assert path.name == f"{i:05d}.ts"
         if i < meta.marked_segments:
             assert path.parent.name == ("A" if code[i] else "B")
-    # the variant never appears in a URL: the token carries only lecture, segment, student and expiry
+    # the variant never appears in a URL: the token carries only title, segment, viewer and expiry
     assert "/A/" not in text and "/B/" not in text
     payload = deliver._unb64(tokens[0].split(".")[0]).decode().split("\x1f")
     assert payload[:3] == ["lec40", "0", "s00007"] and len(payload) == 4

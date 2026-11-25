@@ -27,10 +27,10 @@ TERMS, DECOYS, MAX_DY = 12, 16, 2.0
 _REF = 64  # patterns are normalised on a fixed 64x64 grid, so every resolution gets the same amplitude
 
 
-def _params(key: bytes, name: str, lecture: str, seg: int, decoy: int | None):
-    # Decoys only need to be independent of the real marks, so one set serves every segment of a lecture
+def _params(key: bytes, name: str, title: str, seg: int, decoy: int | None):
+    # Decoys only need to be independent of the real marks, so one set serves every segment of a title
     # (generated once per trace instead of per segment).
-    g = rng(key, "pic", name, lecture, seg) if decoy is None else rng(key, "pic-decoy", name, lecture, decoy)
+    g = rng(key, "pic", name, title, seg) if decoy is None else rng(key, "pic-decoy", name, title, decoy)
     return (g.integers(1, 7, TERMS), g.integers(1, 7, TERMS), g.uniform(0, 2 * np.pi, TERMS),
             g.uniform(0, 2 * np.pi, TERMS), g.choice([-1.0, 1.0], TERMS))
 
@@ -43,11 +43,11 @@ def _eval(params, xn: np.ndarray, yn: np.ndarray) -> np.ndarray:
 
 
 @lru_cache(maxsize=512)
-def pattern(key: bytes, name: str, lecture: str, seg: int, decoy: int | None, w: int, h: int,
+def pattern(key: bytes, name: str, title: str, seg: int, decoy: int | None, w: int, h: int,
             box: tuple[int, int, int, int]) -> np.ndarray:
     """A carrier's pattern on a w x h grid of the WIDTH x HEIGHT canvas, in [-1, 1] inside the content box and
     0 outside it. The same pattern at any resolution, because it is defined on the content's own coordinates."""
-    params = _params(key, name, lecture, seg, decoy)
+    params = _params(key, name, title, seg, decoy)
     ref = np.linspace(0, 1, _REF)
     peak = np.abs(_eval(params, ref, ref)).max() or 1.0
     bx, by, bw, bh = box
@@ -66,28 +66,28 @@ def _planes(yuv: np.ndarray):
 
 
 @lru_cache(maxsize=64)
-def _gains(key: bytes, lecture: str, seg: int, box: tuple[int, int, int, int]):
+def _gains(key: bytes, title: str, seg: int, box: tuple[int, int, int, int]):
     """Each carrier's per-pixel strength for one segment: brightness and contrast on the luma grid; saturation,
     hue and tint on the chroma grid. Computed once per segment, used for every frame."""
-    lp = lambda n: pattern(key, n, lecture, seg, None, WIDTH, HEIGHT, box)  # noqa: E731
-    cp = lambda n: pattern(key, n, lecture, seg, None, WIDTH // 2, HEIGHT // 2, box)  # noqa: E731
+    lp = lambda n: pattern(key, n, title, seg, None, WIDTH, HEIGHT, box)  # noqa: E731
+    cp = lambda n: pattern(key, n, title, seg, None, WIDTH // 2, HEIGHT // 2, box)  # noqa: E731
     return (BUDGET.brightness * lp("brightness"), BUDGET.contrast * lp("contrast"), BUDGET.saturation * cp("saturation"),
             np.float32(np.deg2rad(BUDGET.hue_deg)) * cp("hue"), BUDGET.tint * cp("tint_u"), BUDGET.tint * cp("tint_v"))
 
 
-def prepare(box, key: bytes, lecture: str, seg: int) -> None:
+def prepare(box, key: bytes, title: str, seg: int) -> None:
     """Compute a segment's patterns ahead of marking its frames in parallel."""
-    _gains(key, lecture, seg, tuple(int(v) for v in box))
+    _gains(key, title, seg, tuple(int(v) for v in box))
 
 
-def delta(yuv: np.ndarray, t_frac: float, box, key: bytes, lecture: str, seg: int) -> np.ndarray | None:
+def delta(yuv: np.ndarray, t_frac: float, box, key: bytes, title: str, seg: int) -> np.ndarray | None:
     """The change rendition A applies to this frame (B applies the opposite), as a float32 array shaped like the
     frame; None at a point in the segment where the temporal code is zero. Saturation and hue are linearised: with
     at most 3 % and 1.5 degrees the dropped second-order terms are below 0.05 code values."""
     s = np.float32(code(t_frac))
     if s == 0:
         return None
-    kb, kc, ks, kh, ku, kv = _gains(key, lecture, seg, tuple(int(v) for v in box))
+    kb, kc, ks, kh, ku, kv = _gains(key, title, seg, tuple(int(v) for v in box))
     Y, U, V = _planes(yuv)
     h, w = HEIGHT, WIDTH
     d = np.empty(yuv.shape, np.float32)
@@ -118,10 +118,10 @@ def apply(yuv: np.ndarray, d: np.ndarray | None, sign: int) -> np.ndarray:
     return op(yuv, d, dtype=cv2.CV_8U)
 
 
-def embed(yuv: np.ndarray, t_frac: float, box, key: bytes, lecture: str, seg: int, sign: int) -> np.ndarray:
+def embed(yuv: np.ndarray, t_frac: float, box, key: bytes, title: str, seg: int, sign: int) -> np.ndarray:
     """One frame (YUV420, WIDTH x HEIGHT) at position t_frac (0..1) inside segment `seg`, marked for rendition
     A (sign +1) or B (sign -1). Returns a new array."""
-    return apply(yuv, delta(yuv, t_frac, box, key, lecture, seg), sign)
+    return apply(yuv, delta(yuv, t_frac, box, key, title, seg), sign)
 
 
 def to_analysis(yuv: np.ndarray) -> np.ndarray:
@@ -194,7 +194,7 @@ def _photometric_residual(L: np.ndarray, M: np.ndarray, tau: np.ndarray) -> np.n
 
 
 def measure(leak: list[np.ndarray], mezz: list[np.ndarray], t_fracs: list[float], valid: np.ndarray,
-            key: bytes, lecture: str, seg: int, box) -> dict:
+            key: bytes, title: str, seg: int, box) -> dict:
     """Evidence from each picture carrier as (estimate, standard error), estimate ~ +1 for A and -1 for B.
     leak and mezz are analysis-size (3, h, w) frames already on the master's geometry; t_fracs their positions
     in the segment; valid the master pixels the leak really covers."""
@@ -220,7 +220,7 @@ def measure(leak: list[np.ndarray], mezz: list[np.ndarray], t_fracs: list[float]
     }
 
     def pat(name, decoy=None):
-        return pattern(key, name, lecture, seg if decoy is None else -1, decoy, ANALYSIS_W, ANALYSIS_H, box).ravel()[keep]
+        return pattern(key, name, title, seg if decoy is None else -1, decoy, ANALYSIS_W, ANALYSIS_H, box).ravel()[keep]
 
     def pats(carrier, decoy=None):
         return (pat("tint_u", decoy), pat("tint_v", decoy)) if carrier == "tint" else (pat(carrier, decoy),)

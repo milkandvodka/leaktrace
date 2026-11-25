@@ -1,4 +1,4 @@
-"""Attacks: what happens to a student's copy on its way to a Telegram group. Each takes a source file and an
+"""Attacks: what happens to a viewer's copy on its way to a Telegram group. Each takes a source file and an
 output folder and returns the attacked file.
 
 The phone-filming ones are simulations (keystone perspective, lens blur, sensor noise, colour cast, vignette,
@@ -11,7 +11,7 @@ from pathlib import Path
 from .. import media
 from ..config import SEG_SECONDS
 from ..deliver import _variant
-from ..ingest import LectureMeta, lecture_dir
+from ..ingest import TitleMeta, title_dir
 
 V264 = ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
 
@@ -76,7 +76,7 @@ _ROOM_A = ("[0:a]highpass=f=200,lowpass=f=4000,aecho=0.8:0.5:35|60:0.35|0.25,vol
 
 
 def camcord(src, out_dir):
-    """A phone filming a laptop screen: keystone, blur, colour cast, vignette, noise, 30 fps; the lecture audio
+    """A phone filming a laptop screen: keystone, blur, colour cast, vignette, noise, 30 fps; the title audio
     goes out of laptop speakers, through the room and into the phone's microphone."""
     out = _out(out_dir, src, "camcord")
     media.run(["-i", src, "-filter_complex", f"[0:v]{_CAMCORD_V}[v];{_ROOM_A}", "-map", "[v]", "-map", "[a]",
@@ -121,15 +121,15 @@ ATTACKS = {
 }
 
 
-def collude_interleave(lecture_id: str, students: list[str], out_dir: Path, seed: int = 0) -> Path:
-    """Students pool their copies and splice them segment by segment (each segment from a random one)."""
-    folder = lecture_dir(lecture_id)
-    meta = LectureMeta.load(folder)
+def collude_interleave(title_id: str, viewers: list[str], out_dir: Path, seed: int = 0) -> Path:
+    """Viewers pool their copies and splice them segment by segment (each segment from a random one)."""
+    folder = title_dir(title_id)
+    meta = TitleMeta.load(folder)
     rng = random.Random(seed)
     lines, seg = [], 0
     for line in (folder / "A" / "index.m3u8").read_text().splitlines():
         if line.endswith(".ts"):
-            line = (folder / _variant(meta, rng.choice(students), seg) / f"{seg:05d}.ts").as_posix()
+            line = (folder / _variant(meta, rng.choice(viewers), seg) / f"{seg:05d}.ts").as_posix()
             seg += 1
         lines.append(line)
     Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -142,7 +142,7 @@ def collude_interleave(lecture_id: str, students: list[str], out_dir: Path, seed
 
 
 def collude_average(copies: list[Path], out_dir: Path) -> Path:
-    """Two students average their copies frame by frame and sample by sample, hoping the marks cancel."""
+    """Two viewers average their copies frame by frame and sample by sample, hoping the marks cancel."""
     a, b = copies[:2]
     out = _out(out_dir, a, "average")
     media.run(["-i", a, "-i", b, "-filter_complex", "[0:v][1:v]blend=all_mode=average[v];[0:a][1:a]amix=inputs=2[a]",

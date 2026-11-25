@@ -6,7 +6,7 @@ from leaktrace.watch import Message, Watcher
 
 class FakeReport:
     def __init__(self, n):
-        self.id, self.verdict, self.lecture, self.suspects = f"t{n}", "identified", {"title": "L"}, [{"student": "s1"}]
+        self.id, self.verdict, self.title, self.suspects = f"t{n}", "identified", {"name": "L"}, [{"viewer": "s1"}]
 
 
 def _msg(i, kind, src=None):

@@ -5,10 +5,10 @@ import type { Bench } from "./api";
 const LABEL: Record<string, string> = {
   telegram: "Telegram re-compression", telegram5: "Forwarded through 5 groups", p240: "Shrunk to 240p", crop70: "Cropped to the middle 70%",
   letterbox_portrait: "Re-posted as a vertical video", speed125: "Sped up to 1.25x", screenrec: "Screen recording", camcord: "Phone filming the screen",
-  nokia: "Old Nokia filming the screen", muted: "Sound removed", audio_only: "Audio only", collude_interleave: "Two students splice their copies",
-  "collude_interleave+telegram": "Spliced, then Telegram", collude_average: "Two students average their copies",
+  nokia: "Old Nokia filming the screen", muted: "Sound removed", audio_only: "Audio only", collude_interleave: "Two viewers splice their copies",
+  "collude_interleave+telegram": "Spliced, then Telegram", collude_average: "Two viewers average their copies",
 };
-const clip = (c: string) => (c === "full" ? "whole lecture" : `${Math.round(Number(c) / 60)} min clip`);
+const clip = (c: string) => (c === "full" ? "whole title" : `${Math.round(Number(c) / 60)} min clip`);
 
 export function BenchView({ onAuth }: { onAuth: () => void }) {
   const [bench, setBench] = useState<Bench | null>(null);
@@ -21,7 +21,7 @@ export function BenchView({ onAuth }: { onAuth: () => void }) {
     <div className="space-y-6">
       <div>
         <h1 className="text-[26px] font-bold text-ink">Attack bench</h1>
-        <p className="mt-1 text-[14.5px] text-muted max-w-[680px]">Real students' copies put through what leaks go through, then traced among {bench ? bench.candidates.toLocaleString() : "many"} accounts. "Named" means identified with less than a one-in-a-million chance of being wrong.</p>
+        <p className="mt-1 text-[14.5px] text-muted max-w-[680px]">Real viewers' copies put through what leaks go through, then traced among {bench ? bench.candidates.toLocaleString() : "many"} accounts. "Named" means identified with less than a one-in-a-million chance of being wrong.</p>
       </div>
       {error && <div className="rounded-xl border border-line bg-white p-4 text-[14px] text-muted">{error}</div>}
       {bench && (

@@ -2,21 +2,21 @@ import Hls from "hls.js";
 import { Download, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Unauthorized, api } from "./api";
-import type { Lecture, Student } from "./api";
+import type { Title, Viewer } from "./api";
 
 export function Watch({ onAuth }: { onAuth: () => void }) {
-  const [lectures, setLectures] = useState<Lecture[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [lecture, setLecture] = useState("");
-  const [student, setStudent] = useState("");
+  const [titles, setTitles] = useState<Title[]>([]);
+  const [viewers, setViewers] = useState<Viewer[]>([]);
+  const [title, setTitle] = useState("");
+  const [viewer, setViewer] = useState("");
   const [links, setLinks] = useState<{ playlist: string; download: string } | null>(null);
   const [error, setError] = useState("");
   const video = useRef<HTMLVideoElement>(null);
   const fail = (e: unknown) => (e instanceof Unauthorized ? onAuth() : setError(e instanceof Error ? e.message : String(e)));
 
   useEffect(() => {
-    api.lectures().then((l) => { const ready = l.filter((x) => x.status === "ready"); setLectures(ready); setLecture(ready[0]?.id ?? ""); }).catch(fail);
-    api.students().then((s) => { setStudents(s); setStudent(s[0]?.id ?? ""); }).catch(fail);
+    api.titles().then((l) => { const ready = l.filter((x) => x.status === "ready"); setTitles(ready); setTitle(ready[0]?.id ?? ""); }).catch(fail);
+    api.viewers().then((s) => { setViewers(s); setViewer(s[0]?.id ?? ""); }).catch(fail);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -31,27 +31,27 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
     el.src = links.playlist; // Safari plays HLS natively
   }, [links]);
 
-  const open = () => { setError(""); api.session(lecture, student).then(setLinks).catch(fail); };
-  const name = students.find((s) => s.id === student)?.name;
+  const open = () => { setError(""); api.session(title, viewer).then(setLinks).catch(fail); };
+  const name = viewers.find((s) => s.id === viewer)?.name;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-[26px] font-bold text-ink">Watch as a student</h1>
-        <p className="mt-1 text-[14.5px] text-muted max-w-[640px]">What a student sees: the normal lecture. Underneath, this copy carries marks unique to them in its timing, its sound and its picture.</p>
+        <h1 className="text-[26px] font-bold text-ink">Watch as a viewer</h1>
+        <p className="mt-1 text-[14.5px] text-muted max-w-[640px]">What a viewer sees: the normal video. Underneath, this copy carries marks unique to them in its timing, its sound and its picture.</p>
       </div>
       <div className="card p-5 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-        <label className="text-[12.5px] text-muted">Lecture
-          <select className="field mt-1" value={lecture} onChange={(e) => setLecture(e.target.value)}>
-            {lectures.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+        <label className="text-[12.5px] text-muted">Title
+          <select className="field mt-1" value={title} onChange={(e) => setTitle(e.target.value)}>
+            {titles.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </label>
-        <label className="text-[12.5px] text-muted">Student
-          <select className="field mt-1" value={student} onChange={(e) => setStudent(e.target.value)}>
-            {students.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.id})</option>)}
+        <label className="text-[12.5px] text-muted">Viewer
+          <select className="field mt-1" value={viewer} onChange={(e) => setViewer(e.target.value)}>
+            {viewers.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.id})</option>)}
           </select>
         </label>
-        <button type="button" className="btn-primary h-10" disabled={!lecture || !student} onClick={open}><Play size={16} /> Open their copy</button>
+        <button type="button" className="btn-primary h-10" disabled={!title || !viewer} onClick={open}><Play size={16} /> Open their copy</button>
       </div>
       {error && <div role="alert" className="rounded-xl border border-bad-200 bg-bad-50 text-bad-700 p-4 text-[14px]">{error}</div>}
       {links && (

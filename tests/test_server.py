@@ -35,14 +35,14 @@ def test_health(client):
 
 
 def test_admin_requires_token(client):
-    assert client.get("/api/lectures").status_code == 401
-    assert client.get("/api/lectures", headers={"Authorization": "Bearer nope"}).status_code == 401
-    assert client.get("/api/lectures", headers=ADMIN).status_code == 200
+    assert client.get("/api/titles").status_code == 401
+    assert client.get("/api/titles", headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert client.get("/api/titles", headers=ADMIN).status_code == 200
 
 
 def test_session_playlist_segments_and_view_log(client):
-    assert client.post("/api/students", json={"students": [{"id": "s00042", "name": "Asha Rao"}]}, headers=ADMIN).status_code == 200
-    r = client.post("/api/sessions", json={"lecture": "lec40", "student": "s00042"}, headers=ADMIN)
+    assert client.post("/api/viewers", json={"viewers": [{"id": "s00042", "name": "Asha Rao"}]}, headers=ADMIN).status_code == 200
+    r = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN)
     assert r.status_code == 200
     play = r.json()["playlist"]
     assert play.startswith("/play/") and r.json()["download"].startswith("/download/")  # relative: works behind a proxy
@@ -52,20 +52,20 @@ def test_session_playlist_segments_and_view_log(client):
     seg = client.get(seg_urls[0][seg_urls[0].index("/s/"):])
     assert seg.status_code == 200 and seg.content[:1] == b"\x47"  # MPEG-TS sync byte
     from leaktrace import server
-    assert "s00042" in server.store().viewers("lec40")
+    assert "s00042" in server.store().watched_by("lec40")
 
 
 def test_segment_token_cannot_be_swapped(client):
-    play = client.post("/api/sessions", json={"lecture": "lec40", "student": "s00042"}, headers=ADMIN).json()["playlist"]
+    play = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN).json()["playlist"]
     url = [l for l in client.get(play).text.splitlines() if "/s/" in l][2]
     path = url[url.index("/s/"):]
     assert client.get(path[:-3] + ("AAA" if not path.endswith("AAA") else "BBB")).status_code == 403
     assert client.get("/s/garbage").status_code == 403
 
 
-def test_unknown_lecture_or_student_rejected(client):
-    assert client.post("/api/sessions", json={"lecture": "nope", "student": "s00042"}, headers=ADMIN).status_code == 404
-    assert client.post("/api/sessions", json={"lecture": "lec40", "student": "ghost"}, headers=ADMIN).status_code == 404
+def test_unknown_title_or_viewer_rejected(client):
+    assert client.post("/api/sessions", json={"title": "nope", "viewer": "s00042"}, headers=ADMIN).status_code == 404
+    assert client.post("/api/sessions", json={"title": "lec40", "viewer": "ghost"}, headers=ADMIN).status_code == 404
 
 
 def test_trace_job_returns_report(client, tmp_path):
@@ -81,23 +81,23 @@ def test_trace_job_returns_report(client, tmp_path):
     assert report["report"]["verdict"] == "not_ours"
 
 
-def test_lecture_upload_packages_it(client, tmp_path, monkeypatch):
+def test_title_upload_packages_it(client, tmp_path, monkeypatch):
     monkeypatch.setenv("LEAKTRACE_PRESET", "veryfast")
     master = tmp_path / "m.mp4"
     media.run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=4.5", "-f", "lavfi",
                "-i", "sine=frequency=300:duration=4.5", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", master])
     lid = f"upl-{uuid.uuid4().hex[:8]}"  # the test data folder is a cache kept between runs
     with open(master, "rb") as f:
-        r = client.post("/api/lectures", data={"id": lid, "title": "Uploaded"},
+        r = client.post("/api/titles", data={"id": lid, "name": "Uploaded"},
                         files={"file": ("m.mp4", f, "video/mp4")}, headers=ADMIN)
     assert r.status_code == 200
     job = _wait(client, r.json()["job"])
     assert job["status"] == "done", job
-    lec = next(l for l in client.get("/api/lectures", headers=ADMIN).json() if l["id"] == lid)
+    lec = next(l for l in client.get("/api/titles", headers=ADMIN).json() if l["id"] == lid)
     assert lec["status"] == "ready"
-    bad = client.post("/api/lectures", data={"id": "Bad Id!", "title": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
+    bad = client.post("/api/titles", data={"id": "Bad Id!", "name": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
                       headers=ADMIN)
     assert bad.status_code == 422
-    again = client.post("/api/lectures", data={"id": "lec40", "title": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
+    again = client.post("/api/titles", data={"id": "lec40", "name": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
                         headers=ADMIN)
-    assert again.status_code == 409  # never silently replace a lecture students already have copies of
+    assert again.status_code == 409  # never silently replace a title viewers already have copies of

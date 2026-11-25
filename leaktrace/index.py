@@ -1,4 +1,4 @@
-"""What leaks are looked up in, built from a lecture's unmarked mezzanine:
+"""What leaks are looked up in, built from a title's unmarked mezzanine:
 
 - fp.npz: audio landmarks (pairs of spectral peaks, Shazam-style) at 8 kHz, which survive phone microphones,
   room echo and voice codecs. Each pair hashes to (f1, f2 - f1, dt); dt is what a speed change scales.
@@ -27,14 +27,14 @@ THUMB_FPS = 5               # one thumbnail every 0.2 s (every 5th frame at 25 f
 
 def thumb(gray: np.ndarray) -> np.ndarray:
     """A small high-passed grey thumbnail (local contrast, where text lines live; lighting gradients drop out),
-    unit length. Lecture-wide structure is removed later by subtracting the lecture's mean thumbnail."""
+    unit length. Title-wide structure is removed later by subtracting the title's mean thumbnail."""
     t = cv2.resize(gray, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA).astype(np.float32)
     t = (t - cv2.GaussianBlur(t, (0, 0), 2.0)).ravel()
     return t / (np.linalg.norm(t) + 1e-6)
 
 
 def centred(thumbs: np.ndarray, mean: np.ndarray) -> np.ndarray:
-    """Thumbnails minus the lecture's mean thumbnail (its shared template), back to unit length."""
+    """Thumbnails minus the title's mean thumbnail (its shared template), back to unit length."""
     x = thumbs - mean
     return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-6)
 
@@ -133,7 +133,7 @@ def build(folder: Path) -> None:
 
 @lru_cache(maxsize=256)
 def load(folder: str, stamp: float) -> dict:
-    """A lecture's index, cached until its files change (stamp = modification time)."""
+    """A title's index, cached until its files change (stamp = modification time)."""
     fp, kf = np.load(Path(folder) / "fp.npz"), np.load(Path(folder) / "kf.npz")
     thumbs = kf["thumbs"].astype(np.float32)
     mean = thumbs.mean(axis=0) if len(thumbs) else np.zeros(THUMB_W * THUMB_H, np.float32)

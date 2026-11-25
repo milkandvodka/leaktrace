@@ -4,15 +4,15 @@ import type { FormEvent } from "react";
 import { token } from "./api";
 import { BenchView } from "./Bench";
 import { Library } from "./Library";
-import { StudentsView } from "./Students";
+import { ViewersView } from "./Viewers";
 import { TraceView } from "./Trace";
 import { Watch } from "./Watch";
 
 const TABS = [
   { key: "trace", label: "Trace a leak", short: "Trace", Icon: ScanSearch },
-  { key: "lectures", label: "Lectures", short: "Lectures", Icon: Film },
-  { key: "watch", label: "Watch as a student", short: "Watch", Icon: PlayCircle },
-  { key: "students", label: "Students", short: "Students", Icon: Users },
+  { key: "titles", label: "Titles", short: "Titles", Icon: Film },
+  { key: "watch", label: "Watch as a viewer", short: "Watch", Icon: PlayCircle },
+  { key: "viewers", label: "Viewers", short: "Viewers", Icon: Users },
   { key: "bench", label: "Attack bench", short: "Bench", Icon: ShieldCheck },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
@@ -68,9 +68,9 @@ export default function App() {
       </header>
       <main className="flex-1 max-w-[1100px] w-full mx-auto px-4 sm:px-6 py-7">
         {tab === "trace" && <TraceView onAuth={signOut} />}
-        {tab === "lectures" && <Library onAuth={signOut} />}
+        {tab === "titles" && <Library onAuth={signOut} />}
         {tab === "watch" && <Watch onAuth={signOut} />}
-        {tab === "students" && <StudentsView onAuth={signOut} />}
+        {tab === "viewers" && <ViewersView onAuth={signOut} />}
         {tab === "bench" && <BenchView onAuth={signOut} />}
       </main>
     </div>

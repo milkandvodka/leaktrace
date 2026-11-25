@@ -1,12 +1,12 @@
-"""Synthetic lectures for tests and the attack bench.
+"""Synthetic titles for tests and the attack bench.
 
-They look and sound like a real lecture where the marks care:
+They look and sound like a real title where the marks care:
 - slides with text and a coloured header (picture carriers need flat areas and colour);
 - a moving pointer and a small speaker box (motion);
 - speech with natural pauses (the timing carrier hides in pauses).
 
 Speech is Windows text-to-speech when asked for and available. Otherwise it's a deterministic speech-like
-signal, so tests get the same lecture on every run and on any machine.
+signal, so tests get the same title on every run and on any machine.
 """
 import platform
 import shutil
@@ -121,8 +121,8 @@ def _tts(text: str, voice: str, tmp: Path) -> np.ndarray | None:
     return x.astype(np.float64) / 32768
 
 
-def make_lecture(out: Path, seconds: float, seed: int, tts: bool = True) -> Path:
-    """Render a synthetic lecture of exactly `seconds` to `out` (H.264 1280x720 25 fps, AAC 48 kHz mono)."""
+def make_title(out: Path, seconds: float, seed: int, tts: bool = True) -> Path:
+    """Render a synthetic title of exactly `seconds` to `out` (H.264 1280x720 25 fps, AAC 48 kHz mono)."""
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)

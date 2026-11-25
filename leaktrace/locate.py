@@ -1,8 +1,8 @@
-"""Which lecture a leaked clip comes from, and where: master time = offset + speed * clip time.
+"""Which title a leaked clip comes from, and where: master time = offset + speed * clip time.
 
-Audio first: landmark hashes vote for (lecture, offset) at each candidate speed, the winner is refit on its
+Audio first: landmark hashes vote for (title, offset) at each candidate speed, the winner is refit on its
 consistent matches. Clips with no usable audio fall back to video: ORB keyframe matching gives a rough place,
-then the clip's motion trace is slid against the lecture's to pin it to the frame.
+then the clip's motion trace is slid against the title's to pin it to the frame.
 """
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -13,19 +13,19 @@ import numpy as np
 from . import index, media
 from .carriers.picture import gray_small
 from .config import FP_SR, FPS, HEIGHT, SEG_SECONDS, WIDTH
-from .ingest import LectureMeta
+from .ingest import TitleMeta
 
 # A 0.02 grid from 0.75x to 2x, plus the speeds players actually offer; the best is then refined in 0.005 steps.
 SPEEDS = np.array(sorted(set(np.round(np.arange(0.76, 2.0001, 0.02), 2)) | {0.75, 1.25, 1.75}))
 MIN_VOTES = 12
-MAX_PLACES = 3   # places a clip may match about equally well (a lecture repeating itself)
+MAX_PLACES = 3   # places a clip may match about equally well (a title repeating itself)
 TIE = 0.25       # a second place counts from this fraction of the best (a clip from a 2-minute recap
-                 # of a 30-minute lecture still matches its source); a clip that isn't ours gets 2-4 votes
+                 # of a 30-minute title still matches its source); a clip that isn't ours gets 2-4 votes
 
 
 @dataclass
 class Location:
-    lecture_id: str
+    title_id: str
     offset: float      # master seconds at clip time 0
     speed: float       # master seconds per clip second
     votes: int
@@ -43,20 +43,20 @@ class Location:
         return asdict(self)
 
 
-def _covered(meta: LectureMeta, offset: float, speed: float, duration: float) -> list[int]:
+def _covered(meta: TitleMeta, offset: float, speed: float, duration: float) -> list[int]:
     start, end = offset, offset + speed * duration
     first = max(0, int(np.ceil(start / SEG_SECONDS - 1e-6)))
     last = min(meta.marked_segments, int(np.floor(end / SEG_SECONDS + 1e-6)))
     return list(range(first, last))
 
 
-def _by_audio(leak: Path, lectures: list[Path], duration: float) -> list[Location]:
-    """Every place the clip's sound matches about equally well (a lecture can repeat itself: a recap, a shared
+def _by_audio(leak: Path, titles: list[Path], duration: float) -> list[Location]:
+    """Every place the clip's sound matches about equally well (a title can repeat itself: a recap, a shared
     intro), best first; empty when nothing stands out."""
     t, f = index.peaks(media.audio(leak, FP_SR))
     if len(t) < 20:
         return []
-    best = _vote(t, f, lectures, SPEEDS)
+    best = _vote(t, f, titles, SPEEDS)
     if best is not None:  # refine the speed around the winner
         best = _vote(t, f, [best[1]], np.round(best[2] + np.arange(-0.015, 0.0151, 0.005), 3), best)
     if best is None:
@@ -65,7 +65,7 @@ def _by_audio(leak: Path, lectures: list[Path], duration: float) -> list[Locatio
     places = _places(hist)
     if not places:
         return []
-    meta = LectureMeta.load(folder)
+    meta = TitleMeta.load(folder)
     out = []
     for v, k in places:
         inl = np.abs(offs - (k + base)) <= 2
@@ -82,8 +82,8 @@ def _by_audio(leak: Path, lectures: list[Path], duration: float) -> list[Locatio
 def _places(hist: np.ndarray) -> list[tuple[int, int]]:
     """(votes, offset bin) of each place worth reading, best first; empty when nothing stands out.
 
-    A clip that isn't from the lecture gets 2-4 votes per offset; a real match gets dozens to thousands. Any
-    other tall peak is the same clip matching a passage the lecture repeats, so it's kept for trace to read."""
+    A clip that isn't from the title gets 2-4 votes per offset; a real match gets dozens to thousands. Any
+    other tall peak is the same clip matching a passage the title repeats, so it's kept for trace to read."""
     peaks, h = [], hist.copy()
     for _ in range(MAX_PLACES + 1):
         k = int(np.argmax(h))
@@ -98,15 +98,15 @@ def _places(hist: np.ndarray) -> list[tuple[int, int]]:
     return places if peaks[0][0] >= 1.5 * rest else []
 
 
-def _vote(t, f, lectures, speeds, best=None):
-    """(votes, lecture, speed, offsets, offset base, offset histogram, clip frames, master frames) for the
-    lecture and speed with the most consistent hits."""
+def _vote(t, f, titles, speeds, best=None):
+    """(votes, title, speed, offsets, offset base, offset histogram, clip frames, master frames) for the
+    title and speed with the most consistent hits."""
     for scale in speeds:
         qh, qt = index.pairs(t, f, scale)
         if not len(qh):
             continue
         q_master = np.round(qt * scale).astype(np.int64)
-        for folder in lectures:
+        for folder in titles:
             idx = index.get(folder)
             H, T = idx["hashes"], idx["times"]
             lo, hi = np.searchsorted(H, qh, "left"), np.searchsorted(H, qh, "right")
@@ -133,7 +133,7 @@ MAX_VIDEO_SAMPLES = 600  # 2 minutes of the clip at 5 per second is plenty to pl
 
 
 def _geometry(samples: list[np.ndarray], idx: dict) -> np.ndarray:
-    """Homography from the clip's frames onto the lecture's (640x360 grey). Lecture slides share a template, so
+    """Homography from the clip's frames onto the title's (640x360 grey). Title slides share a template, so
     matching against any keyframe gives the camera's geometry even when the slide itself differs."""
     matcher = _flann()
     matcher.add([idx["desc"]])
@@ -154,14 +154,14 @@ def _geometry(samples: list[np.ndarray], idx: dict) -> np.ndarray:
     return best if best_inliers >= 15 else np.eye(3)
 
 
-def _by_video(leak: Path, lectures: list[Path], duration: float):
-    """Straighten the clip's frames, then slide their thumbnail sequence along each lecture's and score every
+def _by_video(leak: Path, titles: list[Path], duration: float):
+    """Straighten the clip's frames, then slide their thumbnail sequence along each title's and score every
     offset (and a few playback speeds) at once; the best offset is pinned to the frame with the motion trace."""
     grays = [gray_small(f) for _, f in zip(range(MAX_VIDEO_SAMPLES), media.frames(leak, WIDTH, HEIGHT, index.THUMB_FPS))]
     if len(grays) < 10:
         return None
     best = None
-    for folder in lectures:
+    for folder in titles:
         idx = index.get(folder)
         M = idx["thumbs"]
         if not len(M) or not len(idx["desc"]):
@@ -169,7 +169,7 @@ def _by_video(leak: Path, lectures: list[Path], duration: float):
         H = _geometry(grays, idx)
         size = (grays[0].shape[1], grays[0].shape[0])
         L = index.centred(np.stack([index.thumb(cv2.warpPerspective(g, H, size)) for g in grays]), idx["thumb_mean"])
-        S = L @ M.T  # cosine similarity: clip sample x lecture thumbnail
+        S = L @ M.T  # cosine similarity: clip sample x title thumbnail
         j = np.arange(len(L))
         for speed in VIDEO_SPEEDS:
             span = int(np.ceil(speed * (len(L) - 1)))
@@ -179,7 +179,7 @@ def _by_video(leak: Path, lectures: list[Path], duration: float):
             cols = offsets[:, None] + np.round(speed * j)[None, :].astype(int)
             score = S[j[None, :], cols].mean(axis=1)
             k = int(np.argmax(score))
-            # With the lecture's template removed, a true match scores high in absolute terms and well above a
+            # With the title's template removed, a true match scores high in absolute terms and well above a
             # typical offset. (Neighbouring offsets on a static slide score almost as high, so a runner-up test
             # would reject real matches; the motion trace settles the exact frame afterwards.)
             lift = float(score[k]) - float(np.median(score))
@@ -188,14 +188,14 @@ def _by_video(leak: Path, lectures: list[Path], duration: float):
     if best is None or best[0] < 0.55 or best[1] < 0.2:
         return None
     score, _standout, folder, rough, speed = best
-    meta = LectureMeta.load(folder)
+    meta = TitleMeta.load(folder)
     offset = _refine_by_motion(leak, index.get(folder)["motion"], rough, duration, search=3.0) if speed == 1.0 else rough
     return Location(meta.id, float(offset), float(speed), int(round(score * 100)), "video", duration,
                     _covered(meta, offset, speed, duration))
 
 
 def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, duration: float, search: float = 12.0) -> float:
-    """Slide the clip's frame-to-frame motion against the lecture's and take the best frame offset."""
+    """Slide the clip's frame-to-frame motion against the title's and take the best frame offset."""
     clip, prev = [], None
     for n, f in enumerate(media.frames(leak, WIDTH, HEIGHT, FPS, dur=min(duration, 90.0))):
         mv, prev = index.motion(f[:HEIGHT], prev)
@@ -216,19 +216,19 @@ def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, durat
     return best if best_score > 0.3 else rough
 
 
-def locate_all(leak: Path, lectures: list[Path]) -> list[Location]:
-    """Every place in the packaged lectures (folders with fp.npz / kf.npz) the clip matches about equally well,
+def locate_all(leak: Path, titles: list[Path]) -> list[Location]:
+    """Every place in the packaged titles (folders with fp.npz / kf.npz) the clip matches about equally well,
     best first; empty if it isn't one of them."""
-    lectures = [Path(f) for f in lectures if (Path(f) / "fp.npz").exists()]
+    titles = [Path(f) for f in titles if (Path(f) / "fp.npz").exists()]
     p = media.probe(leak)
-    locs = _by_audio(leak, lectures, p.duration) if p.has_audio else []
+    locs = _by_audio(leak, titles, p.duration) if p.has_audio else []
     if not locs and p.has_video:
-        loc = _by_video(leak, lectures, p.duration)
+        loc = _by_video(leak, titles, p.duration)
         locs = [loc] if loc else []
     return locs
 
 
-def locate(leak: Path, lectures: list[Path]) -> Location | None:
-    """The best place the clip matches, or None if it isn't one of the lectures."""
-    locs = locate_all(leak, lectures)
+def locate(leak: Path, titles: list[Path]) -> Location | None:
+    """The best place the clip matches, or None if it isn't one of the titles."""
+    locs = locate_all(leak, titles)
     return locs[0] if locs else None

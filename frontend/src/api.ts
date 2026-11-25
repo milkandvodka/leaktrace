@@ -19,20 +19,20 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   return r.json();
 }
 
-export interface Lecture {
-  id: string; title: string; status: "processing" | "ready" | "failed"; created: string;
+export interface Title {
+  id: string; name: string; status: "processing" | "ready" | "failed"; created: string;
   meta?: { duration: number; segments: number; marked: number; has_audio: boolean } | null;
 }
-export interface Student { id: string; name: string; created: string }
+export interface Viewer { id: string; name: string; created: string }
 export interface Job {
   id: string; kind: string; status: "queued" | "running" | "done" | "failed"; progress: number;
-  result?: { trace?: string; verdict?: string; lecture?: string } | null; error?: string | null;
+  result?: { trace?: string; verdict?: string; title?: string } | null; error?: string | null;
 }
-export interface Suspect { student: string; z: number; p: number; p_family: number; verdict: string }
+export interface Suspect { viewer: string; z: number; p: number; p_family: number; verdict: string }
 export interface Report {
   id: string; leak: string; created: string;
   verdict: "identified" | "narrowed" | "inconclusive" | "not_ours" | "no_candidates";
-  lecture: { id: string; title: string } | null;
+  title: { id: string; name: string } | null;
   location: { offset: number; speed: number; duration: number; via: "audio" | "video" } | null;
   segments_used: number;
   carriers: Record<string, { weight: number; mean_z: number }>;
@@ -41,27 +41,27 @@ export interface Report {
 }
 export interface BenchRow { attack: string; clip: string; n: number; top_correct: number; identified: number;
   narrowed_or_better: number; false_accusations: number; mean_z: number }
-export interface Bench { lecture: string; created: string; candidates: number; psnr_db: number; table: BenchRow[] }
+export interface Bench { title: string; created: string; candidates: number; psnr_db: number; table: BenchRow[] }
 
 export const api = {
-  lectures: () => call<Lecture[]>("/api/lectures"),
-  students: () => call<Student[]>("/api/students"),
-  addStudents: (students: { id: string; name: string }[]) =>
-    call<{ added: number }>("/api/students", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ students }) }),
-  addLecture: (id: string, title: string, file: File) => {
+  titles: () => call<Title[]>("/api/titles"),
+  viewers: () => call<Viewer[]>("/api/viewers"),
+  addViewers: (viewers: { id: string; name: string }[]) =>
+    call<{ added: number }>("/api/viewers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ viewers }) }),
+  addTitle: (id: string, name: string, file: File) => {
     const fd = new FormData();
-    fd.append("id", id); fd.append("title", title); fd.append("file", file);
-    return call<{ job: string }>("/api/lectures", { method: "POST", body: fd });
+    fd.append("id", id); fd.append("name", name); fd.append("file", file);
+    return call<{ job: string }>("/api/titles", { method: "POST", body: fd });
   },
-  session: (lecture: string, student: string) =>
-    call<{ playlist: string; download: string }>("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lecture, student }) }),
+  session: (title: string, viewer: string) =>
+    call<{ playlist: string; download: string }>("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, viewer }) }),
   trace: (file: File, firstSeen: string) => {
     const fd = new FormData();
     fd.append("file", file);
     if (firstSeen) fd.append("first_seen", new Date(firstSeen).toISOString());
     return call<{ job: string }>("/api/traces", { method: "POST", body: fd });
   },
-  traces: () => call<{ id: string; lecture: string | null; verdict: string; created: string }[]>("/api/traces"),
+  traces: () => call<{ id: string; title: string | null; verdict: string; created: string }[]>("/api/traces"),
   report: (id: string) => call<{ report: Report }>(`/api/traces/${id}`).then((t) => t.report),
   job: (id: string) => call<Job>(`/api/jobs/${id}`),
   bench: () => call<Bench>("/api/bench/latest"),
