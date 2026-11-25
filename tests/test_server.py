@@ -137,14 +137,47 @@ def test_demo_mode_opens_the_api_but_not_new_titles(client, monkeypatch):
     assert client.get("/api/titles").status_code == 401
 
 
-def test_demo_seeds_its_own_title_and_viewers_once(client, monkeypatch, title_40s):
+def test_demo_seeds_its_own_title_viewers_and_a_sample_leak_once(client, monkeypatch, title_40s):
     from leaktrace import server
     monkeypatch.setenv("LEAKTRACE_DEMO", "1")
     monkeypatch.setenv("LEAKTRACE_DEMO_SOURCE", str(title_40s))
     monkeypatch.setenv("LEAKTRACE_PRESET", "veryfast")
-    job = server.seed_demo()
-    if job:  # the test data folder is a cache: a previous run may have packaged it already
-        assert _wait(client, job, timeout=600)["status"] == "done"
+    job = server.seed_demo(keys=["telegram"])
+    if job:  # the test data folder is a cache: a previous run may have done it already
+        assert client.get("/api/demo").json()["preparing"] is True
+        assert _wait(client, job, timeout=900)["status"] == "done"
     assert next(t for t in client.get("/api/titles").json() if t["id"] == server.DEMO_TITLE)["status"] == "ready"
-    assert len([v for v in client.get("/api/viewers").json() if v["id"].startswith("demo")]) >= 5
-    assert server.seed_demo() is None  # already there: nothing to do
+    info = client.get("/api/demo").json()
+    assert [v["name"] for v in info["viewers"]][:2] == ["Asha Rao", "Ravi Kumar"] and len(info["viewers"]) == 6
+    assert info["preparing"] is False and info["audience"] == 1000
+    sample = next(s for s in info["samples"] if s["key"] == "telegram")
+    report = client.get(f"/api/traces/{sample['trace']}").json()["report"]
+    assert report["candidates"] == 1000
+    assert report["suspects"][0]["viewer"] == "demo-v004"  # Arjun's copy, forwarded on Telegram
+    assert not [s for s in report["suspects"] if s["verdict"] == "identified" and s["viewer"] != "demo-v004"]
+    video = client.get(sample["video"])
+    assert video.status_code == 200 and video.headers["content-type"] == "video/mp4"
+    assert server.seed_demo(keys=["telegram"]) is None  # already there: nothing to do
+
+
+def test_demo_api_is_off_outside_demo_mode(client, monkeypatch):
+    monkeypatch.delenv("LEAKTRACE_DEMO", raising=False)
+    assert client.get("/api/demo").status_code == 404
+    assert client.get("/api/demo/samples/telegram.mp4").status_code == 404
+
+
+def test_demo_sample_route_only_serves_known_samples(client, monkeypatch):
+    monkeypatch.setenv("LEAKTRACE_DEMO", "1")
+    for name in ("nope.mp4", "..%2Fleaktrace.db", "samples.json", "telegram"):
+        assert client.get(f"/api/demo/samples/{name}").status_code == 404, name
+
+
+def test_missing_lists_only_samples_not_made_yet(tmp_path, monkeypatch):
+    import json
+    from leaktrace import demo
+    monkeypatch.setattr(demo, "folder", lambda: tmp_path)
+    assert demo.missing() == ["telegram", "camcord", "crop70", "screenrec"]
+    (tmp_path / "samples.json").write_text(json.dumps([{"key": "telegram", "label": "x", "blurb": "y", "trace": "t"}]))
+    assert demo.missing() == ["telegram", "camcord", "crop70", "screenrec"]  # listed, but its video is gone
+    (tmp_path / "telegram.mp4").write_bytes(b"x")
+    assert demo.missing() == ["camcord", "crop70", "screenrec"]

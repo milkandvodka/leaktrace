@@ -17,7 +17,8 @@ Viewer-facing (what a platform's player and download button point at):
   GET /download/{token}    the viewer's own MP4 (logged as a download)
 
 Public demo (LEAKTRACE_DEMO=1): the admin API needs no token, adding titles is off, and on first start the service
-packages the bundled sample (demo/lecture.mp4, or LEAKTRACE_DEMO_SOURCE) and adds sample viewers. Cap uploads with
+packages the bundled sample (demo/lecture.mp4, or LEAKTRACE_DEMO_SOURCE), adds 1,000 sample accounts, and makes and
+traces four sample leaks (GET /api/demo, GET /api/demo/samples/{key}.mp4). Cap uploads with
 LEAKTRACE_MAX_UPLOAD_MB. Never set it on a service holding real titles or viewers.
 
 Run: uvicorn leaktrace.server:app --port 8003
@@ -41,6 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel, StringConstraints
 
 from . import deliver, edge
+from . import demo as public_demo
 from .config import ROOT, settings
 from .ingest import ingest, title_dir
 from .jobs import Jobs
@@ -62,9 +64,7 @@ def jobs() -> Jobs:
     return Jobs(store())
 
 
-DEMO_TITLE = "demo-lecture"
-DEMO_VIEWERS = [("demo-v001", "Asha Rao"), ("demo-v002", "Ravi Kumar"), ("demo-v003", "Meera Iyer"),
-                ("demo-v004", "Arjun Shah"), ("demo-v005", "Nisha Verma"), ("demo-v006", "Kabir Singh")]
+DEMO_TITLE, DEMO_VIEWERS = public_demo.TITLE, public_demo.VIEWERS
 
 
 def demo() -> bool:
@@ -190,37 +190,71 @@ def add_title(id: Annotated[str, Form()], name: Annotated[str, Form()], file: An
     return {"job": _package(_save_upload(file, "masters"), id, name.strip())}
 
 
+def _ingest(path: Path, id: str, name: str, progress) -> dict:
+    preset = os.getenv("LEAKTRACE_PRESET", "medium")
+    try:
+        meta = ingest(path, id, name, progress=progress, preset=preset)
+    except Exception:
+        store().set_title(id, "failed")
+        raise
+    store().set_title(id, "ready", meta.summary())
+    return {"title": id}
+
+
 def _package(path: Path, id: str, name: str) -> str:
     """Package a master as a background job; the title shows as processing until it's ready (or failed)."""
     store().add_title(id, name, "processing")
-    preset = os.getenv("LEAKTRACE_PRESET", "medium")
-
-    def run(progress):
-        try:
-            meta = ingest(path, id, name, progress=progress, preset=preset)
-        except Exception:
-            store().set_title(id, "failed")
-            raise
-        store().set_title(id, "ready", meta.summary())
-        return {"title": id}
-
-    return jobs().submit("ingest", run, {"title": id})
+    return jobs().submit("ingest", lambda progress: _ingest(path, id, name, progress), {"title": id})
 
 
-def seed_demo() -> str | None:
-    """In demo mode, add the sample viewers and package the bundled sample once; the job id, or None when there's
-    nothing to do."""
+def seed_demo(keys: list[str] | None = None) -> str | None:
+    """In demo mode: the sample viewers, then one background job that packages the bundled sample (once), adds the
+    audience and makes the sample leaks still missing (`keys` limits which). The job id, or None when there's nothing
+    to do."""
     if not demo():
         return None
     for vid, name in DEMO_VIEWERS:
         store().add_viewer(vid, name)
     src = Path(os.getenv("LEAKTRACE_DEMO_SOURCE") or ROOT / "demo" / "lecture.mp4")
-    row = store().title(DEMO_TITLE)
-    if (title_dir(DEMO_TITLE) / "meta.json").exists() or not src.exists() or (row and row["status"] == "processing"
-                                                                                 and _seeding):
+    ready = (title_dir(DEMO_TITLE) / "meta.json").exists()
+    todo = [k for k in public_demo.missing() if keys is None or k in keys]
+    if _seeding or (ready and not todo) or (not ready and not src.exists()):
         return None
     _seeding.append(DEMO_TITLE)
-    return _package(src, DEMO_TITLE, "Pharmacology lecture (sample)")
+    if not ready:
+        store().add_title(DEMO_TITLE, "Pharmacology lecture (sample)", "processing")
+
+    def run(progress):
+        try:
+            if not ready:
+                _ingest(src, DEMO_TITLE, "Pharmacology lecture (sample)", lambda p: progress(0.5 * p))
+            public_demo.add_audience(store())
+            public_demo.make_samples(store(), todo, progress=lambda p: progress(0.5 + 0.5 * p))
+            return {"title": DEMO_TITLE, "samples": todo}
+        finally:
+            _seeding.clear()
+
+    return jobs().submit("demo", run, {"title": DEMO_TITLE})
+
+
+@app.get("/api/demo")
+def demo_info() -> dict:
+    """Everything the demo page shows: the title, the named viewers, the sample leaks and their traces."""
+    if not demo():
+        raise HTTPException(404, "Not a demo.")
+    row = store().title(DEMO_TITLE)
+    return {"title": {k: row[k] for k in ("id", "name", "status")} if row else None,
+            "viewers": [{"id": v, "name": n} for v, n in DEMO_VIEWERS],
+            "samples": [s | {"video": f"/api/demo/samples/{s['key']}.mp4"} for s in public_demo.done()],
+            "preparing": bool(_seeding), "audience": len(public_demo.audience())}
+
+
+@app.get("/api/demo/samples/{name}")
+def demo_sample(name: str) -> FileResponse:
+    key = name.removesuffix(".mp4")
+    if not demo() or not name.endswith(".mp4") or key not in {s["key"] for s in public_demo.done()}:
+        raise HTTPException(404, "Not found.")
+    return FileResponse(public_demo.folder() / f"{key}.mp4", media_type="video/mp4")
 
 
 _seeding: list[str] = []

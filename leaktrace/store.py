@@ -70,6 +70,10 @@ class Store:
         with self._lock, closing(self._db()) as db, db:  # closing() closes; the inner `db` commits
             db.execute(sql, args)
 
+    def _write_many(self, sql: str, rows) -> None:
+        with self._lock, closing(self._db()) as db, db:
+            db.executemany(sql, rows)
+
     def _rows(self, sql: str, args=()) -> list[dict]:
         with closing(self._db()) as db:
             return [dict(r) for r in db.execute(sql, args)]
@@ -78,6 +82,11 @@ class Store:
     def add_viewer(self, sid: str, name: str) -> None:
         self._write("INSERT INTO viewers (id, name, created) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
                     (sid, name, now()))
+
+    def add_viewers(self, rows: list[tuple[str, str]]) -> None:
+        t = now()
+        self._write_many("INSERT INTO viewers (id, name, created) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
+                         [(i, n, t) for i, n in rows])
 
     def viewers(self) -> list[dict]:
         return self._rows("SELECT id, name, created FROM viewers ORDER BY id")
@@ -105,6 +114,10 @@ class Store:
     # views
     def log_view(self, viewer: str, title: str, kind: str, at: str | None = None) -> None:
         self._write("INSERT INTO views (viewer, title, kind, at) VALUES (?, ?, ?, ?)", (viewer, title, kind, utc(at) if at else now()))
+
+    def log_views(self, rows: list[tuple[str, str, str, str]]) -> None:
+        self._write_many("INSERT INTO views (viewer, title, kind, at) VALUES (?, ?, ?, ?)",
+                         [(v, t, k, utc(at)) for v, t, k, at in rows])
 
     def watched_by(self, title: str, before: str | None = None) -> list[str]:
         """Viewers who opened the title (before `before`, an ISO time, when given)."""
