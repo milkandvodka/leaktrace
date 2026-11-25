@@ -9,6 +9,7 @@ from fractions import Fraction
 from leaktrace.config import SR
 from leaktrace.grid import V1
 from leaktrace.synth import _babble
+from conftest import needs_amr
 
 M = 0.1  # margin, seconds
 SEG_SAMPLES, T = V1.samples(0), V1.seconds  # the 1.92 s segments of 25 fps titles
@@ -74,6 +75,7 @@ def test_measured_displacement_recovers_sign(speech, sign):
     assert np.sign(stat) == sign and abs(stat / sigma) > 8
 
 
+@needs_amr
 def test_timing_survives_old_phone_audio(speech, tmp_path):
     _a, b, real = _renditions(speech)
     d = real

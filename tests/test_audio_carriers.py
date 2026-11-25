@@ -7,6 +7,7 @@ from leaktrace.carriers import audio
 from leaktrace.config import SR
 from leaktrace.grid import V1
 from leaktrace.synth import _babble
+from conftest import needs_amr
 
 KEY = bytes(range(32))
 M = 0.1
@@ -55,6 +56,7 @@ def test_patchwork_survives_aac_64k(speech, tmp_path):
     assert _z(back, speech[MS:-MS])["patchwork"] > 3
 
 
+@needs_amr
 def test_loudness_survives_amr_nb(speech, tmp_path):
     marked = audio.embed(speech, SR, M, KEY, "lec", 7, -1)
     back = _roundtrip(np.concatenate([speech[:MS], marked, speech[-MS:]]), tmp_path,

@@ -68,3 +68,13 @@ def rendition_a(packaged) -> Path:
         deliver.assemble("lec40", ["A"] * packaged[1].n_segments, out)
     return out
 
+
+
+def _has_encoder(name: str) -> bool:
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    return any(line.split()[1:2] == [name] for line in out.splitlines())
+
+
+HAS_AMR = _has_encoder("libopencore_amrnb")
+# Phone-call audio (AMR-NB at 8 kHz) is simulated with ffmpeg's libopencore encoder, which some builds leave out.
+needs_amr = pytest.mark.skipif(not HAS_AMR, reason="this ffmpeg has no AMR-NB encoder (libopencore_amrnb)")

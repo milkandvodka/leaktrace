@@ -6,7 +6,8 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
-# The service. Debian's ffmpeg includes x264, AAC and AMR-NB (needed by the phone-recording bench attack).
+# The service. Debian's ffmpeg includes x264 and AAC (the bench's phone-call attack also wants AMR-NB; without it
+# those runs are recorded as errors and the rest go on).
 FROM python:3.13-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 1000 leaktrace

@@ -1,5 +1,6 @@
 from leaktrace import media
 from leaktrace.bench.attacks import ATTACKS, collude_average, collude_interleave
+from conftest import HAS_AMR, needs_amr
 
 
 def _short(rendition_a, tmp_path):
@@ -8,6 +9,7 @@ def _short(rendition_a, tmp_path):
     return clip
 
 
+@needs_amr
 def test_nokia_is_qvga_amr(rendition_a, tmp_path):
     out = ATTACKS["nokia"](_short(rendition_a, tmp_path), tmp_path)
     p = media.probe(out)
@@ -26,6 +28,8 @@ def test_telegram5_is_480p(rendition_a, tmp_path):
 def test_every_attack_produces_a_playable_file(rendition_a, tmp_path):
     src = _short(rendition_a, tmp_path)
     for name, fn in ATTACKS.items():
+        if name == "nokia" and not HAS_AMR:
+            continue
         p = media.probe(fn(src, tmp_path))
         assert p.duration > 3, name
         assert p.has_video or name == "audio_only", name
