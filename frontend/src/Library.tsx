@@ -7,7 +7,7 @@ import type { Title } from "./api";
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
 const STATUS: Record<string, string> = { ready: "bg-ok-50 text-ok-700", processing: "bg-warn-50 text-warn-700", failed: "bg-bad-50 text-bad-700" };
 
-export function Library({ onAuth }: { onAuth: () => void }) {
+export function Library({ onAuth, demo = false }: { onAuth: () => void; demo?: boolean }) {
   const [titles, setTitles] = useState<Title[]>([]);
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -37,6 +37,7 @@ export function Library({ onAuth }: { onAuth: () => void }) {
         <h1 className="text-[26px] font-bold text-ink">Titles</h1>
         <p className="mt-1 text-[14.5px] text-muted max-w-[640px]">Each title is packaged once into two marked versions, each a full HLS and DASH quality ladder at the title's own frame rate. Every viewer's stream and download is their own mix of the two, so no two copies are alike.</p>
       </div>
+      {demo ? <p className="card p-5 text-[14px] text-body">Adding titles is turned off in this public demo. The sample below is packaged the same way any title would be: try it on the Watch page, download a viewer's copy, and drop it into Trace.</p> : (
       <form onSubmit={add} className="card p-5 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
         <label className="text-[12.5px] text-muted">Name<input className="field mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Episode 3: The harbour" /></label>
         <label className="text-[12.5px] text-muted">Master video<input className="field mt-1 pt-[5px] text-muted file:mr-3 file:h-7 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:text-[13px] file:font-semibold file:text-brand-700 hover:file:bg-brand-100" type="file" accept="video/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
@@ -44,6 +45,7 @@ export function Library({ onAuth }: { onAuth: () => void }) {
           {busy ? <><LoaderCircle size={16} className="animate-spin" /> {Math.round(progress * 100)}%</> : <><Plus size={16} /> Add title</>}
         </button>
       </form>
+      )}
       {error && <div role="alert" className="rounded-xl border border-bad-200 bg-bad-50 text-bad-700 p-4 text-[14px]">{error}</div>}
       <div className="card overflow-hidden">
         {titles.length === 0 ? <p className="p-5 text-[14px] text-muted">No titles yet. Add one above.</p> : (

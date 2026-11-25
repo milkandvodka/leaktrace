@@ -46,6 +46,7 @@ export interface Bench { title: string; created: string; candidates: number; psn
 export type Session = { token: string; hls: string; dash: string; download: string; expires: number };
 
 export const api = {
+  health: () => fetch("/api/health").then((r) => r.json() as Promise<{ ok: boolean; demo: boolean }>),
   titles: () => call<Title[]>("/api/titles"),
   viewers: () => call<Viewer[]>("/api/viewers"),
   addViewers: (viewers: { id: string; name: string }[]) =>

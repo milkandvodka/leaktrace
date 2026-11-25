@@ -15,11 +15,13 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY leaktrace/ leaktrace/
 COPY edge/ edge/
+COPY demo/ demo/
 COPY --from=ui /ui/dist frontend/dist
 ENV LEAKTRACE_DATA=/data PYTHONUNBUFFERED=1
 RUN mkdir /data && chown leaktrace /data
 USER leaktrace
 VOLUME /data
 EXPOSE 8003
-# LEAKTRACE_SECRET and LEAKTRACE_ADMIN_TOKEN come from the environment at run time, never the image.
-CMD ["python", "-m", "uvicorn", "leaktrace.server:app", "--host", "0.0.0.0", "--port", "8003"]
+# LEAKTRACE_SECRET and LEAKTRACE_ADMIN_TOKEN come from the environment at run time, never the image. Hosts like
+# Railway set PORT; 8003 is the fallback for a plain `docker run`.
+CMD ["sh", "-c", "exec python -m uvicorn leaktrace.server:app --host 0.0.0.0 --port ${PORT:-8003}"]

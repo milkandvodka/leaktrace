@@ -124,3 +124,27 @@ def test_title_upload_packages_it(client, tmp_path, monkeypatch):
     again = client.post("/api/titles", data={"id": "lec40", "name": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")},
                         headers=ADMIN)
     assert again.status_code == 409  # never silently replace a title viewers already have copies of
+
+
+def test_demo_mode_opens_the_api_but_not_new_titles(client, monkeypatch):
+    monkeypatch.setenv("LEAKTRACE_DEMO", "1")
+    assert client.get("/api/health").json()["demo"] is True
+    assert client.get("/api/titles").status_code == 200  # no token needed
+    r = client.post("/api/titles", data={"id": "x1", "name": "x"}, files={"file": ("m.mp4", b"x", "video/mp4")})
+    assert r.status_code == 403  # packaging is the expensive part: visitors can't start it
+    monkeypatch.delenv("LEAKTRACE_DEMO")
+    assert client.get("/api/health").json()["demo"] is False
+    assert client.get("/api/titles").status_code == 401
+
+
+def test_demo_seeds_its_own_title_and_viewers_once(client, monkeypatch, title_40s):
+    from leaktrace import server
+    monkeypatch.setenv("LEAKTRACE_DEMO", "1")
+    monkeypatch.setenv("LEAKTRACE_DEMO_SOURCE", str(title_40s))
+    monkeypatch.setenv("LEAKTRACE_PRESET", "veryfast")
+    job = server.seed_demo()
+    if job:  # the test data folder is a cache: a previous run may have packaged it already
+        assert _wait(client, job, timeout=600)["status"] == "done"
+    assert next(t for t in client.get("/api/titles").json() if t["id"] == server.DEMO_TITLE)["status"] == "ready"
+    assert len([v for v in client.get("/api/viewers").json() if v["id"].startswith("demo")]) >= 5
+    assert server.seed_demo() is None  # already there: nothing to do

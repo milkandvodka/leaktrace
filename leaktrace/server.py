@@ -16,6 +16,10 @@ Viewer-facing (what a platform's player and download button point at):
   GET /media/{title}/{object}   the objects themselves (unguessable names; a bucket or CDN serves these in production)
   GET /download/{token}    the viewer's own MP4 (logged as a download)
 
+Public demo (LEAKTRACE_DEMO=1): the admin API needs no token, adding titles is off, and on first start the service
+packages the bundled sample (demo/lecture.mp4, or LEAKTRACE_DEMO_SOURCE) and adds sample viewers. Cap uploads with
+LEAKTRACE_MAX_UPLOAD_MB. Never set it on a service holding real titles or viewers.
+
 Run: uvicorn leaktrace.server:app --port 8003
 """
 import base64
@@ -58,9 +62,19 @@ def jobs() -> Jobs:
     return Jobs(store())
 
 
+DEMO_TITLE = "demo-lecture"
+DEMO_VIEWERS = [("demo-v001", "Asha Rao"), ("demo-v002", "Ravi Kumar"), ("demo-v003", "Meera Iyer"),
+                ("demo-v004", "Arjun Shah"), ("demo-v005", "Nisha Verma"), ("demo-v006", "Kabir Singh")]
+
+
+def demo() -> bool:
+    return os.getenv("LEAKTRACE_DEMO") == "1"
+
+
 @asynccontextmanager
 async def lifespan(_app):
     jobs()  # marks jobs left unfinished by a previous process as failed
+    seed_demo()
     yield
     jobs().shutdown()
 
@@ -69,6 +83,8 @@ app = FastAPI(title="LeakTrace", lifespan=lifespan)
 
 
 def admin(authorization: Annotated[str | None, Header()] = None) -> None:
+    if demo():
+        return
     expected = settings().admin_token
     if not expected:
         raise HTTPException(503, "Set LEAKTRACE_ADMIN_TOKEN to use the admin API.")
@@ -151,7 +167,7 @@ def _save_upload(file: UploadFile, folder: str) -> Path:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "demo": demo()}
 
 
 @app.get("/api/titles", dependencies=[Admin])
@@ -161,6 +177,8 @@ def titles() -> list[dict]:
 
 @app.post("/api/titles", dependencies=[Admin])
 def add_title(id: Annotated[str, Form()], name: Annotated[str, Form()], file: Annotated[UploadFile, File()]) -> dict:
+    if demo():
+        raise HTTPException(403, "Adding titles is turned off in this public demo.")
     if not ID.match(id):
         raise HTTPException(422, "Title ids: lowercase letters, digits and dashes, up to 64.")
     if not name.strip():
@@ -169,20 +187,43 @@ def add_title(id: Annotated[str, Form()], name: Annotated[str, Form()], file: An
     if (existing and existing["status"] != "failed") or (title_dir(id) / "meta.json").exists():
         # Viewers already hold copies of it; replacing it would make their leaks untraceable.
         raise HTTPException(409, "A title with this id already exists. Pick another id.")
-    path = _save_upload(file, "masters")
-    store().add_title(id, name.strip(), "processing")
+    return {"job": _package(_save_upload(file, "masters"), id, name.strip())}
+
+
+def _package(path: Path, id: str, name: str) -> str:
+    """Package a master as a background job; the title shows as processing until it's ready (or failed)."""
+    store().add_title(id, name, "processing")
     preset = os.getenv("LEAKTRACE_PRESET", "medium")
 
     def run(progress):
         try:
-            meta = ingest(path, id, name.strip(), progress=progress, preset=preset)
+            meta = ingest(path, id, name, progress=progress, preset=preset)
         except Exception:
             store().set_title(id, "failed")
             raise
         store().set_title(id, "ready", meta.summary())
         return {"title": id}
 
-    return {"job": jobs().submit("ingest", run, {"title": id})}
+    return jobs().submit("ingest", run, {"title": id})
+
+
+def seed_demo() -> str | None:
+    """In demo mode, add the sample viewers and package the bundled sample once; the job id, or None when there's
+    nothing to do."""
+    if not demo():
+        return None
+    for vid, name in DEMO_VIEWERS:
+        store().add_viewer(vid, name)
+    src = Path(os.getenv("LEAKTRACE_DEMO_SOURCE") or ROOT / "demo" / "lecture.mp4")
+    row = store().title(DEMO_TITLE)
+    if (title_dir(DEMO_TITLE) / "meta.json").exists() or not src.exists() or (row and row["status"] == "processing"
+                                                                                 and _seeding):
+        return None
+    _seeding.append(DEMO_TITLE)
+    return _package(src, DEMO_TITLE, "Pharmacology lecture (sample)")
+
+
+_seeding: list[str] = []
 
 
 @app.get("/api/viewers", dependencies=[Admin])
@@ -300,6 +341,8 @@ def get_job(jid: str) -> dict:
 @app.get("/api/bench/latest", dependencies=[Admin])
 def bench_latest() -> dict:
     p = settings().data / "bench" / "latest.json"
+    if not p.exists() and demo():
+        p = ROOT / "demo" / "bench.json"  # a fresh demo shows the results the bundled bench produced
     if not p.exists():
         raise HTTPException(404, "No bench results yet. Run: python -m leaktrace bench <title>")
     return json.loads(p.read_text())

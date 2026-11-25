@@ -9,6 +9,7 @@ __pycache__/
 # media and runtime data (lectures, renditions, bench results)
 var/
 *.mp4
+!demo/lecture.mp4
 *.ts
 !frontend/**/*.ts
 *.wav

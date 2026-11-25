@@ -1,7 +1,7 @@
 import { Film, KeyRound, PlayCircle, ScanSearch, ShieldCheck, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { token } from "./api";
+import { api, token } from "./api";
 import { BenchView } from "./Bench";
 import { Library } from "./Library";
 import { ViewersView } from "./Viewers";
@@ -40,12 +40,15 @@ function TokenGate({ onDone }: { onDone: () => void }) {
 export default function App() {
   const [tab, setTab] = useState<Tab>(fromHash);
   const [authed, setAuthed] = useState(() => Boolean(token.get()));
+  const [demo, setDemo] = useState<boolean | null>(null); // a public demo needs no token
+  useEffect(() => { api.health().then((h) => setDemo(Boolean(h.demo))).catch(() => setDemo(false)); }, []);
   useEffect(() => {
     const onHash = () => setTab(fromHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
-  if (!authed) return <TokenGate onDone={() => setAuthed(true)} />;
+  if (demo === null) return null;
+  if (!authed && !demo) return <TokenGate onDone={() => setAuthed(true)} />;
   const signOut = () => { token.set(""); setAuthed(false); };
   const go = (t: Tab) => { history.replaceState(null, "", `#${t}`); setTab(t); };
 
@@ -56,6 +59,7 @@ export default function App() {
           <img src="/favicon.svg" alt="" className="size-7" />
           <span className="font-bold text-ink text-[16px] tracking-[-0.01em]">LeakTrace</span>
           <span className="hidden md:inline text-[13px] text-muted border-l border-line pl-3">Every copy is unique. Every leak has an owner.</span>
+          {demo && <span className="ml-auto text-[12px] font-semibold rounded-full px-2.5 py-0.5 bg-brand-50 text-brand-700">Public demo</span>}
         </div>
         <nav aria-label="Sections" className="max-w-[1100px] mx-auto px-1.5 sm:px-6 flex sm:gap-1 overflow-x-auto">
           {TABS.map(({ key, label, short, Icon }) => (
@@ -68,7 +72,7 @@ export default function App() {
       </header>
       <main className="flex-1 max-w-[1100px] w-full mx-auto px-4 sm:px-6 py-7">
         {tab === "trace" && <TraceView onAuth={signOut} />}
-        {tab === "titles" && <Library onAuth={signOut} />}
+        {tab === "titles" && <Library onAuth={signOut} demo={Boolean(demo)} />}
         {tab === "watch" && <Watch onAuth={signOut} />}
         {tab === "viewers" && <ViewersView onAuth={signOut} />}
         {tab === "bench" && <BenchView onAuth={signOut} />}
