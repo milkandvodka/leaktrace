@@ -153,3 +153,25 @@ def test_a_2997_fps_stereo_title_is_traced_to_its_viewer(ntsc150):
     r = trace(deliver.export("ntsc150", LEAKER), ntsc150)
     assert r.title["id"] == "ntsc150" and r.segments_used >= 70
     assert r.verdict == "identified" and r.suspects[0]["viewer"] == LEAKER, (r.verdict, r.suspects[:3])
+
+
+def _probe(strength, votes, name):
+    from leaktrace.locate import Location
+    return strength, Location("t", 0.0, 1.0, votes, "audio", 60.0, [1]), {"name": name}
+
+
+def test_weak_marks_dont_overrule_the_place_most_of_the_sound_matched():
+    from leaktrace.trace import _pick
+    # a phone recording: the 8-segment probe reads about as noisy at both places
+    _s, loc, rows = _pick([_probe(1.2, 400, "start"), _probe(1.6, 200, "repeat")], probed=8)
+    assert rows["name"] == "start"
+
+
+def test_clearly_stronger_marks_win_over_more_votes():
+    from leaktrace.trace import _pick
+    assert _pick([_probe(1.1, 400, "start"), _probe(9.0, 200, "repeat")], probed=8)[2]["name"] == "repeat"
+
+
+def test_a_tie_in_votes_is_settled_by_the_marks():
+    from leaktrace.trace import _pick
+    assert _pick([_probe(1.1, 300, "first"), _probe(1.5, 295, "second")], probed=8)[2]["name"] == "second"

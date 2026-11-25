@@ -248,7 +248,7 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
             _read(leak, m, cand, key, cand.segments[:PROBE_SEGMENTS], feats[m.id], has_audio, has_video, rows, tick)
             y, _w = fuse(np.stack([rows[s] for s in sorted(rows)]))
             probes.append((float(np.mean(y ** 2)), cand, rows))
-        _strength, loc, z_rows = max(probes, key=lambda x: x[0])
+        _strength, loc, z_rows = _pick(probes, PROBE_SEGMENTS)
     meta = meta_of(loc.title_id)
     report.title = {"id": meta.id, "name": meta.name}
     report.location = loc.as_dict()
@@ -269,6 +269,22 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
     if progress:
         progress(1.0)
     return report
+
+
+def _pick(probes: list[tuple[float, Location, dict]], probed: int) -> tuple[float, Location, dict]:
+    """The place to read, from (mean y^2 over the probed segments, place, rows) per candidate, best-voted first.
+
+    The marks decide when they clearly do: the probed place reads stronger by more than noise (mean y^2 over n
+    segments of pure noise varies by about 2/sqrt(n) between two places, so 2x that), or the places matched about
+    equally (votes within 10 %). Otherwise the place most of the clip's sound matched stands: a full copy matches
+    its own start with all of its sound and a repeat with only part of it, and a weak copy (an old phone) can
+    probe stronger at the wrong place by chance."""
+    by_votes = probes[0]
+    best = max(probes, key=lambda x: x[0])
+    if best is by_votes:
+        return best
+    tied = best[1].votes >= 0.9 * by_votes[1].votes
+    return best if tied or best[0] - by_votes[0] > 4 / np.sqrt(max(1, probed)) else by_votes
 
 
 def _summarise(report: TraceReport, meta: TitleMeta, key: bytes, z_rows: dict, pool: list[str], tries: int = 1) -> bool:
