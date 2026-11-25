@@ -16,7 +16,7 @@ It plugs into what you already run: HLS and DASH (CMAF), any CDN, any player, yo
 | Sound | spectral patchwork, slow loudness swell, bass/treble balance | Low-frequency, slow, and spread over the whole speech band |
 | Picture | brightness, tint, saturation, hue, local contrast | Large, smooth patterns tied to the content, read after undoing the camera's geometry and colour |
 
-Each mark is far below what a viewer can notice (a marked master measures PSNR_DB dB PSNR against the original). The same segment carries the same bit in every rung and in the audio, so a player switching quality changes nothing. At trace time LeakTrace measures which families survived this particular leak and weighs them accordingly: a muted clip is read from its picture, a phone recording mostly from its timing and sound.
+Each mark is far below what a viewer can notice (a marked master measures 41.2 dB PSNR against the original). The same segment carries the same bit in every rung and in the audio, so a player switching quality changes nothing. At trace time LeakTrace measures which families survived this particular leak and weighs them accordingly: a muted clip is read from its picture, a phone recording mostly from its timing and sound.
 
 **Finding the title.** Audio landmark fingerprints, searched over playback speeds from 0.75x to 2x, place a clip in the library to the frame. Clips with no sound are placed by matching their picture sequence. When a clip matches several places about equally (a recap, a series intro, the same film in two editions), the marks decide which one it really is.
 
@@ -33,7 +33,26 @@ All nine marks carry the same bit, one per segment, so evidence grows with lengt
 
 ## Results
 
-RESULTS_TABLE
+Real copies of a 4-minute sample title, put through what leaks go through and traced among 1,000 candidate accounts (69 runs, two different viewers per row; **0 innocent accounts named**). *Named* means identified (chance of a wrong name below one in a million); *narrowed* points at the right account but below the bar for naming it.
+
+| Leak | Full length | 2 minutes | 1 minute |
+|---|---|---|---|
+| Telegram re-compression | 2/2 named | 2/2 named | 2 narrowed |
+| Forwarded through 5 Telegram groups | 2/2 named | 2/2 named | 2 narrowed |
+| Shrunk to 240p | 2/2 named | 2/2 named | 2 narrowed |
+| Cropped to 70% | 2/2 named | 2/2 named | 2 narrowed |
+| Letterboxed into portrait | 2/2 named | 1 named, 1 inconclusive | 2 narrowed |
+| Sped up 1.25x | 2/2 named | 2/2 named | 1 named, 1 inconclusive |
+| Screen recording | 2/2 named | 2/2 named | 2 narrowed |
+| Phone filming the screen | 2/2 named | 2/2 named | 1 narrowed, 1 inconclusive |
+| Old phone (QVGA, 8 kHz AMR audio) | 1 named, 1 inconclusive | 1 narrowed, 1 inconclusive | 2 inconclusive |
+| Sound removed | 2/2 named | 2/2 named | 2 narrowed |
+| Sound only | 2/2 named | 2/2 named | 2 narrowed |
+| Two viewers splicing their copies | one of them narrowed | | |
+| … then re-compressed | one of them narrowed | | |
+| Two viewers averaging their copies | one of them named | | |
+
+Run it yourself: `python -m leaktrace bench <title>`.
 
 ## Plugging it in
 
