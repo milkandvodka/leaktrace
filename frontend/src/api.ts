@@ -8,6 +8,13 @@ export const token = {
   set: (t: string) => { try { localStorage.setItem(TOKEN_KEY, t); } catch { /* private mode: lasts this page */ } },
 };
 
+/** Whether this browser has seen the demo guide. */
+const SEEN = "lt.tour-seen";
+export const tourSeen = {
+  get: () => { try { return localStorage.getItem(SEEN) === "1"; } catch { return false; } },
+  set: () => { try { localStorage.setItem(SEEN, "1"); } catch { /* blocked storage: it shows again next visit */ } },
+};
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const r = await fetch(path, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token.get()}` } });
   if (r.status === 401) throw new Unauthorized();
@@ -43,10 +50,17 @@ export interface BenchRow { attack: string; clip: string; n: number; top_correct
   narrowed_or_better: number; false_accusations: number; mean_z: number }
 export interface Bench { title: string; created: string; candidates: number; psnr_db: number; table: BenchRow[] }
 
+export interface DemoSample { key: string; label: string; blurb: string; trace: string; video: string }
+export interface DemoInfo {
+  title: { id: string; name: string; status: Title["status"] } | null;
+  viewers: { id: string; name: string }[]; samples: DemoSample[]; preparing: boolean; audience: number;
+}
+
 export type Session = { token: string; hls: string; dash: string; download: string; expires: number };
 
 export const api = {
   health: () => fetch("/api/health").then((r) => r.json() as Promise<{ ok: boolean; demo: boolean }>),
+  demo: () => call<DemoInfo>("/api/demo"),
   titles: () => call<Title[]>("/api/titles"),
   viewers: () => call<Viewer[]>("/api/viewers"),
   addViewers: (viewers: { id: string; name: string }[]) =>

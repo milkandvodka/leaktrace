@@ -4,6 +4,21 @@ import { useEffect, useRef, useState } from "react";
 import { Unauthorized, api } from "./api";
 import type { Session, Title, Viewer } from "./api";
 
+/** A plain HLS player (hls.js, or Safari's own). */
+export function HlsVideo({ src, className }: { src: string; className?: string }) {
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = video.current;
+    if (!el) return;
+    if (!Hls.isSupported()) { el.src = src; return; }
+    const hls = new Hls();
+    hls.loadSource(src);
+    hls.attachMedia(el);
+    return () => hls.destroy();
+  }, [src]);
+  return <video ref={video} controls playsInline className={className} />;
+}
+
 export function Watch({ onAuth }: { onAuth: () => void }) {
   const [titles, setTitles] = useState<Title[]>([]);
   const [viewers, setViewers] = useState<Viewer[]>([]);

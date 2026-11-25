@@ -30,7 +30,7 @@ function Strength({ z }: { z: number }) {
   );
 }
 
-export function Report({ r, names }: { r: R; names: Record<string, string> }) {
+export function Report({ r, names, compact = false }: { r: R; names: Record<string, string>; compact?: boolean }) {
   const [copied, setCopied] = useState(false);
   const top = r.suspects[0];
   const who = (id: string) => (names[id] ? `${names[id]} (${id})` : id);
@@ -110,7 +110,7 @@ export function Report({ r, names }: { r: R; names: Record<string, string> }) {
         </div>
       )}
 
-      {r.notice && (
+      {r.notice && !compact && (
         <div className="card p-5">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold text-ink">Takedown notice draft</h3>
