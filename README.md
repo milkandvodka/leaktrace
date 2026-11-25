@@ -133,6 +133,8 @@ cd frontend && npm ci && npm run build && cd ..
 python -m uvicorn leaktrace.server:app --port 8003                 # then open http://127.0.0.1:8003
 ```
 
+Public demo: set `LEAKTRACE_DEMO=1` on a service with no real titles or viewers. It opens on a guided page (watch a viewer's copy, pick a sample leak, see whose copy it was, try your own) with a short tour, and the console behind one link. No admin token, no new titles; the first start packages `demo/lecture.mp4` and makes the sample leaks, which takes a few minutes.
+
 Docker:
 
 ```bash
