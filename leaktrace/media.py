@@ -106,7 +106,8 @@ def frames(path: Path, w: int, h: int, fps, start: float = 0.0,
             proc.wait()
         if finished and proc.returncode:
             err.seek(0)
-            raise MediaError(err.read().decode(errors="replace")[-2000:])
+            raise MediaError(f"ffmpeg exited with {proc.returncode} reading {Path(path).name}: "
+                             + err.read().decode(errors="replace")[-2000:])
 
 
 def audio(path: Path, sr: int = SR, start: float = 0.0, dur: float | None = None) -> np.ndarray:

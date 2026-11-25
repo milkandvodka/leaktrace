@@ -49,7 +49,14 @@ def bench(title_id: str, viewers: int = 2, clips=(None, 120, 60), attacks: list[
 
     def run(label, src, truth: set[str], clip, viewer):
         t0 = time.time()
-        r = trace(src, store, candidates=pool)
+        try:
+            r = trace(src, store, candidates=pool)
+        except Exception as e:  # one broken run is a row in the results, not the end of the bench
+            rows.append({"attack": label, "clip": clip or "full", "viewer": viewer, "verdict": "error", "top": None,
+                         "top_correct": False, "z": 0.0, "false_accusation": False, "segments": 0, "via": None,
+                         "seconds": round(time.time() - t0, 1), "carriers": {}, "error": f"{type(e).__name__}: {e}"[:300]})
+            log(f"{label:20s} {str(clip or 'full'):>5}  error        {rows[-1]['error'][:80]}")
+            return
         top = r.suspects[0]["viewer"] if r.suspects else None
         named = [s["viewer"] for s in r.suspects if s["verdict"] == "identified"]
         rows.append({"attack": label, "clip": clip or "full", "viewer": viewer, "verdict": r.verdict,

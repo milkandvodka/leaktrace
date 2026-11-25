@@ -10,6 +10,7 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
   const [title, setTitle] = useState("");
   const [viewer, setViewer] = useState("");
   const [links, setLinks] = useState<Session | null>(null);
+  const [format, setFormat] = useState<"hls" | "dash">("hls");
   const [error, setError] = useState("");
   const video = useRef<HTMLVideoElement>(null);
   const fail = (e: unknown) => (e instanceof Unauthorized ? onAuth() : setError(e instanceof Error ? e.message : String(e)));
@@ -22,6 +23,17 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
   useEffect(() => {
     const el = video.current;
     if (!el || !links) return;
+    if (format === "dash") {
+      let player: { reset: () => void } | null = null;
+      let gone = false;
+      import("dashjs").then(({ default: dashjs }) => { // loaded only when someone picks DASH
+        if (gone) return;
+        const p = dashjs.MediaPlayer().create();
+        p.initialize(el, links.dash, false);
+        player = p;
+      }).catch(fail);
+      return () => { gone = true; player?.reset(); };
+    }
     if (Hls.isSupported()) {
       const hls = new Hls();
       hls.loadSource(links.hls);
@@ -29,7 +41,7 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
       return () => hls.destroy();
     }
     el.src = links.hls; // Safari plays HLS natively
-  }, [links]);
+  }, [links, format]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = () => { setError(""); api.session(title, viewer).then(setLinks).catch(fail); };
   const name = viewers.find((s) => s.id === viewer)?.name;
@@ -61,8 +73,14 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
             <span className="text-[14px] text-body">This copy belongs to <span className="font-semibold text-ink">{name}</span>. Watching it is logged.</span>
             <a className="btn-ghost" href={links.download}><Download size={16} /> Download their copy</a>
           </div>
-          <div className="px-4 pb-4 text-[12.5px] text-faint break-all">
-            Same manifests for every viewer, only the token in the path differs: <a className="underline" href={links.hls}>HLS</a> · <a className="underline" href={links.dash}>DASH</a>
+          <div className="px-4 pb-4 flex flex-wrap items-center gap-3 text-[12.5px] text-faint">
+            <div role="radiogroup" aria-label="Streaming format" className="inline-flex rounded-lg border border-line p-0.5">
+              {(["hls", "dash"] as const).map((f) => (
+                <button key={f} type="button" role="radio" aria-checked={format === f} onClick={() => setFormat(f)}
+                  className={`px-2.5 py-1 rounded-md text-[12.5px] font-semibold ${format === f ? "bg-brand-50 text-brand-700" : "text-muted"}`}>{f.toUpperCase()}</button>
+              ))}
+            </div>
+            <span className="break-all">Same manifests for every viewer; only the token in the path differs: <a className="underline" href={links.hls}>HLS</a> · <a className="underline" href={links.dash}>DASH</a></span>
           </div>
         </div>
       )}
