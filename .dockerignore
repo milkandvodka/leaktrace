@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+.superpowers
+var
+**/__pycache__
+.pytest_cache
+frontend/node_modules
+frontend/dist
+*.mp4
+*.ts
+!frontend/**/*.ts
+*.wav
