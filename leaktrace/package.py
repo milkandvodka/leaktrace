@@ -84,8 +84,10 @@ def encode_video(master: Path, out: Path, rungs: list[Rung], seg_frames: int, se
                  "-sc_threshold", 0,
                  "-force_key_frames", f"expr:eq(mod(n,{n}),0)", "-f", "hls", "-hls_segment_type", "fmp4",
                  "-hls_time", seg_s / 2,  # under a segment: a cut at every IDR frame, which is every segment start
-                 "-hls_playlist_type", "vod", "-hls_list_size", 0, "-hls_fmp4_init_filename", d / "init.mp4",
-                 "-hls_segment_filename", d / "%05d.m4s", d / "index.m3u8"]
+                 # ffmpeg writes the init segment next to the playlist, found by its last "/": forward slashes on
+                 # every platform, so it lands in the rung's folder on Windows as well as Linux
+                 "-hls_playlist_type", "vod", "-hls_list_size", 0, "-hls_fmp4_init_filename", "init.mp4",
+                 "-hls_segment_filename", (d / "%05d.m4s").as_posix(), (d / "index.m3u8").as_posix()]
     media.run(args)
 
 
