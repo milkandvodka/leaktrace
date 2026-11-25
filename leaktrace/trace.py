@@ -209,17 +209,24 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
     if not locs:
         store.add_trace(report.id, None, report.verdict, report.as_dict())
         return report
-    meta = TitleMeta.load(settings().data / "titles" / locs[0].title_id)
     key = settings().secret
-    report.title = {"id": meta.id, "name": meta.name}
-
     p = media.probe(leak)
     has_audio, has_video = p.has_audio, p.has_video
-    feats = (None, None, None, None)
-    if has_audio and meta.has_audio:
-        leak_audio, mezz_audio = media.audio(leak, AUDIO_SR), media.audio(settings().data / "titles" / meta.id / "mezzanine.mp4", AUDIO_SR)
-        feats = (tcar.features(leak_audio, AUDIO_SR), tcar.features(mezz_audio, AUDIO_SR),
-                 acar.spec(leak_audio, AUDIO_SR), acar.spec(mezz_audio, AUDIO_SR))
+    leak_audio = media.audio(leak, AUDIO_SR) if has_audio else None
+    leak_feats = (tcar.features(leak_audio, AUDIO_SR), acar.spec(leak_audio, AUDIO_SR)) if has_audio else None
+    metas: dict[str, TitleMeta] = {}
+    feats: dict[str, tuple] = {}
+
+    def meta_of(tid: str) -> TitleMeta:
+        if tid not in metas:
+            metas[tid] = TitleMeta.load(settings().data / "titles" / tid)
+            m = metas[tid]
+            feats[tid] = (None, None, None, None)
+            if has_audio and m.has_audio:
+                mezz_audio = media.audio(settings().data / "titles" / tid / "mezzanine.mp4", AUDIO_SR)
+                feats[tid] = (leak_feats[0], tcar.features(mezz_audio, AUDIO_SR), leak_feats[1],
+                              acar.spec(mezz_audio, AUDIO_SR))
+        return metas[tid]
 
     total = sum(len(l.segments) for l in locs) if len(locs) > 1 else len(locs[0].segments)
     done = [0]
@@ -229,17 +236,21 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
         if progress:
             progress(0.95 * min(1.0, done[0] / total))
 
-    # The clip matches several places equally (the title repeats itself): the marks only read at the true one.
+    # The clip matches several places about equally (a title repeating itself, or the same material in two
+    # titles): the marks only read at the true one.
     z_rows: dict[int, np.ndarray] = {}
     loc = locs[0]
     if len(locs) > 1:
         probes = []
         for cand in locs:
             rows: dict = {}
-            _read(leak, meta, cand, key, cand.segments[:PROBE_SEGMENTS], feats, has_audio, has_video, rows, tick)
+            m = meta_of(cand.title_id)
+            _read(leak, m, cand, key, cand.segments[:PROBE_SEGMENTS], feats[m.id], has_audio, has_video, rows, tick)
             y, _w = fuse(np.stack([rows[s] for s in sorted(rows)]))
             probes.append((float(np.mean(y ** 2)), cand, rows))
         _strength, loc, z_rows = max(probes, key=lambda x: x[0])
+    meta = meta_of(loc.title_id)
+    report.title = {"id": meta.id, "name": meta.name}
     report.location = loc.as_dict()
 
     segs = [s for s in loc.segments if s not in z_rows]
@@ -251,7 +262,7 @@ def trace(leak: Path, store: Store, first_seen: str | None = None, candidates: l
     pool = candidates if candidates is not None else (store.watched_by(meta.id, before=first_seen) or store.viewer_ids())
     report.candidates = len(pool)
     for pass_segs in passes:
-        _read(leak, meta, loc, key, pass_segs, feats, has_audio, has_video, z_rows, tick)
+        _read(leak, meta, loc, key, pass_segs, feats[meta.id], has_audio, has_video, z_rows, tick)
         if _summarise(report, meta, key, z_rows, pool, tries=len(locs)):
             break
     store.add_trace(report.id, meta.id, report.verdict, report.as_dict())

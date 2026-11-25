@@ -17,3 +17,7 @@ var/
 !tests/fixtures/**
 frontend/node_modules/
 frontend/dist/
+
+# CDN edge keys and bundled edge functions (they hold keys)
+edge.env
+*-cf.js

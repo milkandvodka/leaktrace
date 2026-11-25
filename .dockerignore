@@ -12,3 +12,5 @@ frontend/dist
 *.ts
 !frontend/**/*.ts
 *.wav
+edge.env
+*-cf.js

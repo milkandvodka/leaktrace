@@ -26,15 +26,17 @@ def test_probe(title_40s):
     assert abs(p.duration - 40) < 0.1
 
 
-def test_encoder_makes_aligned_segments(tmp_path):
+def test_encoder_makes_a_master_with_a_key_frame_at_every_segment(tmp_path):
+    from test_ingest import keyframes
     rng = np.random.default_rng(0)
-    with media.Encoder(tmp_path / "A", (WIDTH, HEIGHT), V1.fps, V1.seg_frames, channels=1) as enc:
+    with media.Encoder(tmp_path / "A.mp4", (WIDTH, HEIGHT), V1.fps, V1.seg_frames, channels=1) as enc:
         for i in range(4 * SEG_FRAMES):
             enc.write_frame(np.full((HEIGHT * 3 // 2, WIDTH), 60 + i % 100, np.uint8))
         enc.write_audio((0.1 * rng.standard_normal(4 * SEG_SAMPLES)).astype(np.float32))
-    lines = (tmp_path / "A" / "index.m3u8").read_text().splitlines()
-    assert [l for l in lines if l.startswith("#EXTINF")] == ["#EXTINF:1.920000,"] * 4
-    assert [l for l in lines if l.endswith(".ts")] == ["00000.ts", "00001.ts", "00002.ts", "00003.ts"]
+    assert keyframes(tmp_path / "A.mp4") == ([0, 48, 96, 144], 4 * SEG_FRAMES)
+    p = media.probe(tmp_path / "A.mp4")
+    assert p.has_audio and abs(p.duration - 4 * V1.seconds) < 0.05
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["A.mp4"]  # no temporary files left
 
 
 def test_portrait_rotated_input_is_padded_not_stretched(tmp_path, title_40s):

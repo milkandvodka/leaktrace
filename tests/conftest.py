@@ -64,6 +64,7 @@ def rendition_a(packaged) -> Path:
     data, _ = packaged
     out = data / "allA.mp4"
     if not out.exists():
-        media.run(["-i", data / "titles" / "lec40" / "A" / "index.m3u8", "-c", "copy", out])
+        from leaktrace import deliver
+        deliver.assemble("lec40", ["A"] * packaged[1].n_segments, out)
     return out
 

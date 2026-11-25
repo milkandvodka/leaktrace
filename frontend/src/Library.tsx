@@ -35,7 +35,7 @@ export function Library({ onAuth }: { onAuth: () => void }) {
     <div className="space-y-6">
       <div>
         <h1 className="text-[26px] font-bold text-ink">Titles</h1>
-        <p className="mt-1 text-[14.5px] text-muted max-w-[640px]">Each title is packaged once into two marked versions. Every viewer's stream and download is their own mix of the two, so no two copies are alike.</p>
+        <p className="mt-1 text-[14.5px] text-muted max-w-[640px]">Each title is packaged once into two marked versions, each a full HLS and DASH quality ladder at the title's own frame rate. Every viewer's stream and download is their own mix of the two, so no two copies are alike.</p>
       </div>
       <form onSubmit={add} className="card p-5 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
         <label className="text-[12.5px] text-muted">Name<input className="field mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Episode 3: The harbour" /></label>
@@ -48,12 +48,13 @@ export function Library({ onAuth }: { onAuth: () => void }) {
       <div className="card overflow-hidden">
         {titles.length === 0 ? <p className="p-5 text-[14px] text-muted">No titles yet. Add one above.</p> : (
           <table className="w-full text-[14px]">
-            <thead><tr className="text-left text-muted text-[12.5px]"><th className="px-5 py-2.5 font-medium">Title</th><th className="px-3 py-2.5 font-medium">Length</th><th className="px-3 py-2.5 font-medium">Marked pieces</th><th className="px-5 py-2.5 font-medium">Status</th></tr></thead>
+            <thead><tr className="text-left text-muted text-[12.5px]"><th className="px-5 py-2.5 font-medium">Title</th><th className="px-3 py-2.5 font-medium">Length</th><th className="px-3 py-2.5 font-medium hidden md:table-cell">Format</th><th className="px-3 py-2.5 font-medium">Marked pieces</th><th className="px-5 py-2.5 font-medium">Status</th></tr></thead>
             <tbody>
               {titles.map((l) => (
                 <tr key={l.id} className="border-t border-line">
                   <td className="px-5 py-3"><div className="text-ink font-medium">{l.name}</div><div className="text-[12px] text-faint">{l.id}</div></td>
                   <td className="px-3 py-3 tabular-nums">{l.meta ? mmss(l.meta.duration) : "-"}</td>
+                  <td className="px-3 py-3 tabular-nums hidden md:table-cell">{l.meta?.size ? <><div>{l.meta.size} · {l.meta.fps} fps</div><div className="text-[12px] text-faint">{l.meta.ladder?.map((r) => r.slice(1) + "p").join(" · ")}</div></> : "-"}</td>
                   <td className="px-3 py-3 tabular-nums">{l.meta?.marked != null ? `${l.meta.marked} of ${l.meta.segments}` : "-"}</td>
                   <td className="px-5 py-3"><span className={`text-[12.5px] font-semibold rounded-full px-2.5 py-0.5 ${STATUS[l.status]}`}>{l.status}</span></td>
                 </tr>

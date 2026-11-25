@@ -51,8 +51,9 @@ def _covered(meta: TitleMeta, offset: float, speed: float, duration: float) -> l
 
 
 def _by_audio(leak: Path, titles: list[Path], duration: float) -> list[Location]:
-    """Every place the clip's sound matches about equally well (a title can repeat itself: a recap, a shared
-    intro), best first; empty when nothing stands out."""
+    """Every place the clip's sound matches about equally well, best first: a title can repeat itself (a recap)
+    and two titles can share material (a series intro, the same film in two editions). Empty when nothing stands
+    out."""
     t, f = index.peaks(media.audio(leak, FP_SR))
     if len(t) < 20:
         return []
@@ -61,7 +62,18 @@ def _by_audio(leak: Path, titles: list[Path], duration: float) -> list[Location]
         best = _vote(t, f, [best[1]], np.round(best[2] + np.arange(-0.015, 0.0151, 0.005), 3), best)
     if best is None:
         return []
-    _votes, folder, scale, offs, base, hist, q_t, m_t = best
+    found = _audio_places(best, duration)
+    for folder in titles:  # the other titles, at the winner's speed
+        if folder != best[1] and (other := _vote(t, f, [folder], [best[2]])) is not None:
+            found += _audio_places(other, duration)
+    if not found:
+        return []
+    top = max(l.votes for l in found)
+    return sorted((l for l in found if l.votes >= max(MIN_VOTES, TIE * top)), key=lambda l: -l.votes)[:MAX_PLACES]
+
+
+def _audio_places(vote, duration: float) -> list[Location]:
+    _votes, folder, scale, offs, base, hist, q_t, m_t = vote
     places = _places(hist)
     if not places:
         return []
@@ -129,6 +141,7 @@ def _flann():
 
 
 VIDEO_SPEEDS = (1.0, 1.25, 1.5, 0.75, 2.0)
+VIDEO_TIE = 0.03  # thumbnail scores this close to the best title's are read too
 MAX_VIDEO_SAMPLES = 600  # 2 minutes of the clip at 5 per second is plenty to place it
 
 
@@ -154,45 +167,55 @@ def _geometry(samples: list[np.ndarray], idx: dict) -> np.ndarray:
     return best if best_inliers >= 15 else np.eye(3)
 
 
-def _by_video(leak: Path, titles: list[Path], duration: float):
+def _by_video(leak: Path, titles: list[Path], duration: float) -> list[Location]:
     """Straighten the clip's frames, then slide their thumbnail sequence along each title's and score every
     offset (and a few playback speeds) at once; the best offset is pinned to the frame with the motion trace."""
     grays = [gray_small(f) for _, f in zip(range(MAX_VIDEO_SAMPLES), media.frames(leak, WIDTH, HEIGHT, index.THUMB_FPS))]
     if len(grays) < 10:
-        return None
-    best = None
+        return []
+    scored = []
     for folder in titles:
+        best = None
         idx = index.get(folder)
         M = idx["thumbs"]
         if not len(M) or not len(idx["desc"]):
             continue
-        H = _geometry(grays, idx)
         size = (grays[0].shape[1], grays[0].shape[0])
-        L = index.centred(np.stack([index.thumb(cv2.warpPerspective(g, H, size)) for g in grays]), idx["thumb_mean"])
-        S = L @ M.T  # cosine similarity: clip sample x title thumbnail
-        j = np.arange(len(L))
-        for speed in VIDEO_SPEEDS:
-            span = int(np.ceil(speed * (len(L) - 1)))
-            if span >= len(M):
-                continue
-            offsets = np.arange(len(M) - span)
-            cols = offsets[:, None] + np.round(speed * j)[None, :].astype(int)
-            score = S[j[None, :], cols].mean(axis=1)
-            k = int(np.argmax(score))
-            # With the title's template removed, a true match scores high in absolute terms and well above a
-            # typical offset. (Neighbouring offsets on a static slide score almost as high, so a runner-up test
-            # would reject real matches; the motion trace settles the exact frame afterwards.)
-            lift = float(score[k]) - float(np.median(score))
-            if best is None or score[k] > best[0]:
-                best = (float(score[k]), lift, folder, offsets[k] / index.THUMB_FPS, speed)
-    if best is None or best[0] < 0.55 or best[1] < 0.2:
-        return None
-    score, _standout, folder, rough, speed = best
-    meta = TitleMeta.load(folder)
-    offset = (_refine_by_motion(leak, index.get(folder)["motion"], rough, duration, meta.grid.fps, search=3.0)
-              if speed == 1.0 else rough)
-    return Location(meta.id, float(offset), float(speed), int(round(score * 100)), "video", duration,
-                    _covered(meta, offset, speed, duration))
+        j = np.arange(len(grays))
+        # The camera's geometry as estimated, and none at all (a straight copy): an estimate that's slightly off
+        # blurs away the fine thumbnails, so both are scored and the better one counts.
+        for H in (_geometry(grays, idx), np.eye(3)):
+            L = index.centred(np.stack([index.thumb(cv2.warpPerspective(g, H, size)) for g in grays]), idx["thumb_mean"])
+            S = L @ M.T  # cosine similarity: clip sample x title thumbnail
+            for speed in VIDEO_SPEEDS:
+                span = int(np.ceil(speed * (len(L) - 1)))
+                if span >= len(M):
+                    continue
+                offsets = np.arange(len(M) - span)
+                cols = offsets[:, None] + np.round(speed * j)[None, :].astype(int)
+                score = S[j[None, :], cols].mean(axis=1)
+                k = int(np.argmax(score))
+                # With the title's template removed, a true match scores high in absolute terms and well above a
+                # typical offset. (Neighbouring offsets on a static slide score almost as high, so a runner-up test
+                # would reject real matches; the motion trace settles the exact frame afterwards.)
+                lift = float(score[k]) - float(np.median(score))
+                if best is None or score[k] > best[0]:
+                    best = (float(score[k]), lift, folder, offsets[k] / index.THUMB_FPS, speed)
+        if best is not None and best[0] >= 0.55 and best[1] >= 0.2:
+            scored.append(best)
+    if not scored:
+        return []
+    top = max(s[0] for s in scored)
+    out = []
+    for score, _lift, folder, rough, speed in sorted(scored, key=lambda s: -s[0])[:MAX_PLACES]:
+        if score < top - VIDEO_TIE:  # the same picture in another title (another edition) is read too
+            continue
+        meta = TitleMeta.load(folder)
+        offset = (_refine_by_motion(leak, index.get(folder)["motion"], rough, duration, meta.grid.fps, search=3.0)
+                  if speed == 1.0 else rough)
+        out.append(Location(meta.id, float(offset), float(speed), int(round(score * 100)), "video", duration,
+                            _covered(meta, offset, speed, duration)))
+    return out
 
 
 def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, duration: float, title_fps,
@@ -227,8 +250,7 @@ def locate_all(leak: Path, titles: list[Path]) -> list[Location]:
     p = media.probe(leak)
     locs = _by_audio(leak, titles, p.duration) if p.has_audio else []
     if not locs and p.has_video:
-        loc = _by_video(leak, titles, p.duration)
-        locs = [loc] if loc else []
+        locs = _by_video(leak, titles, p.duration)
     return locs
 
 

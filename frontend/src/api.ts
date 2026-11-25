@@ -21,7 +21,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export interface Title {
   id: string; name: string; status: "processing" | "ready" | "failed"; created: string;
-  meta?: { duration: number; segments: number; marked: number; has_audio: boolean } | null;
+  meta?: { duration: number; segments: number; marked: number; has_audio: boolean; size?: string; fps?: string; ladder?: string[] } | null;
 }
 export interface Viewer { id: string; name: string; created: string }
 export interface Job {
@@ -43,6 +43,8 @@ export interface BenchRow { attack: string; clip: string; n: number; top_correct
   narrowed_or_better: number; false_accusations: number; mean_z: number }
 export interface Bench { title: string; created: string; candidates: number; psnr_db: number; table: BenchRow[] }
 
+export type Session = { token: string; hls: string; dash: string; download: string; expires: number };
+
 export const api = {
   titles: () => call<Title[]>("/api/titles"),
   viewers: () => call<Viewer[]>("/api/viewers"),
@@ -54,7 +56,7 @@ export const api = {
     return call<{ job: string }>("/api/titles", { method: "POST", body: fd });
   },
   session: (title: string, viewer: string) =>
-    call<{ playlist: string; download: string }>("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, viewer }) }),
+    call<Session>("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, viewer }) }),
   trace: (file: File, firstSeen: string) => {
     const fd = new FormData();
     fd.append("file", file);

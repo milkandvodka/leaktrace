@@ -14,6 +14,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY leaktrace/ leaktrace/
+COPY edge/ edge/
 COPY --from=ui /ui/dist frontend/dist
 ENV LEAKTRACE_DATA=/data PYTHONUNBUFFERED=1
 RUN mkdir /data && chown leaktrace /data

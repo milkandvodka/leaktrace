@@ -1,4 +1,4 @@
-"""Packaging: one master title in, two marked renditions (A and B) out, plus what tracing needs later.
+"""Packaging: one master title in; two marked masters (A and B), their CMAF ladder, and what tracing needs, out.
 
 The title keeps its own frame rate (as an exact fraction) and resolution (capped at LEAKTRACE_MAX_HEIGHT on the
 short side, never upscaled); its segments are whole frames, about LEAKTRACE_SEGMENT_SECONDS long (grid.py).
@@ -6,7 +6,8 @@ Per segment, streaming:
 1. Warp the audio both ways (timing carrier) and measure the shifts each warp really produced.
 2. Add the audio carriers to each (every channel gets the same marks).
 3. Remap and mark the segment's frames for A and for B (picture carriers), at the title's own size.
-4. Feed both encoders.
+4. Feed both encoders (the marked masters: masters/A.mp4 and B.mp4, an IDR frame at every segment start).
+Then each master is encoded into the quality ladder and published as CMAF behind shared manifests (package.py).
 
 Tracing works on an unmarked analysis copy (the mezzanine): the title fitted inside 1280x720 at its own frame
 rate, mono. The final partial segment is left unmarked. Everything is written to a `.partial` folder and moved
@@ -24,7 +25,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import media
+from . import media, package
 from .carriers import audio as acar
 from .carriers import picture as pcar
 from .carriers import timing as tcar
@@ -54,9 +55,16 @@ class TitleMeta:
     grid: Grid = V1                # titles packaged before v2 were all 25 fps, 1.92 s
     canvas: list[int] = field(default_factory=lambda: [WIDTH, HEIGHT])  # the renditions' own size
     channels: int = 1
+    ladder: list = field(default_factory=list)  # rung names, best first
 
     def as_dict(self) -> dict:
         return {**asdict(self), "grid": self.grid.to_json()}
+
+    def summary(self) -> dict:
+        """What the title list shows."""
+        return {"duration": self.duration, "segments": self.n_segments, "marked": self.marked_segments,
+                "has_audio": self.has_audio, "size": f"{self.canvas[0]}x{self.canvas[1]}",
+                "fps": f"{float(self.grid.fps):.3f}".rstrip("0").rstrip("."), "ladder": self.ladder}
 
     def save(self, folder: Path) -> None:
         (folder / "meta.json").write_text(json.dumps(self.as_dict()), encoding="utf-8")
@@ -140,8 +148,8 @@ def ingest(master: Path, title_id: str, name: str, progress: Callable[[float], N
     frames = media.frames(master, cw, ch, grid.fps)
     timing_meta, n_frames, seg, marked = [], 0, 0, 0
     n = grid.seg_frames
-    enc_a = media.Encoder(work / "A", (cw, ch), grid.fps, n, channels=channels, preset=preset)
-    enc_b = media.Encoder(work / "B", (cw, ch), grid.fps, n, channels=channels, preset=preset)
+    enc_a = media.Encoder(work / "masters" / "A.mp4", (cw, ch), grid.fps, n, channels=channels, preset=preset)
+    enc_b = media.Encoder(work / "masters" / "B.mp4", (cw, ch), grid.fps, n, channels=channels, preset=preset)
     # ponytail: one process, threads per frame (~37 min per hour of 720p on 16 cores, about twice that at 1080p);
     # split segments across processes if packaging throughput ever matters more than simplicity.
     pool = ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4))  # numpy and OpenCV release the GIL
@@ -185,7 +193,7 @@ def ingest(master: Path, title_id: str, name: str, progress: Callable[[float], N
             seg += 1
             before, cur, nxt = cur[-m:], nxt, reader.read(grid.samples(seg + 1))
             if progress:
-                progress(min(0.99, seg / expected))
+                progress(min(0.7, 0.7 * seg / expected))
         enc_a.close()
         enc_b.close()
     except BaseException:
@@ -197,9 +205,20 @@ def ingest(master: Path, title_id: str, name: str, progress: Callable[[float], N
         reader.close()
         frames.close()
 
-    meta = TitleMeta(id=title_id, name=name, duration=float(n_frames / grid.fps), n_frames=n_frames, n_segments=seg,
+    rungs = package.ladder((cw, ch))
+    boundaries = [grid.sample(k) for k in range(seg)]
+    for i, v in enumerate("AB"):
+        package.encode_video(work / "masters" / f"{v}.mp4", work / "work" / v, rungs, n, grid.seconds, preset)
+        if channels:
+            package.encode_audio(work / "masters" / f"{v}.mp4", work / "work" / v, boundaries, channels)
+        if progress:
+            progress(0.7 + 0.12 * (i + 1))
+    duration = float(n_frames / grid.fps)
+    package.publish(work / "work", work / "cmaf", title_id, rungs, seg, channels, str(grid.fps), duration, key)
+    meta = TitleMeta(id=title_id, name=name, duration=duration, n_frames=n_frames, n_segments=seg,
                      marked_segments=marked, box=box, has_audio=p.has_audio, timing=timing_meta,
-                     budget=asdict(BUDGET), created=now(), grid=grid, canvas=[cw, ch], channels=channels)
+                     budget=asdict(BUDGET), created=now(), grid=grid, canvas=[cw, ch], channels=channels,
+                     ladder=[r.name for r in rungs])
     meta.save(work)
     try:
         from . import index  # built here when available, so a packaged title is immediately traceable

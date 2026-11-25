@@ -10,8 +10,7 @@ from pathlib import Path
 
 from .. import media
 from ..grid import segment_seconds
-from ..deliver import _variant
-from ..ingest import TitleMeta, title_dir
+from .. import deliver
 
 V264 = ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
 
@@ -123,22 +122,12 @@ ATTACKS = {
 
 def collude_interleave(title_id: str, viewers: list[str], out_dir: Path, seed: int = 0) -> Path:
     """Viewers pool their copies and splice them segment by segment (each segment from a random one)."""
-    folder = title_dir(title_id)
-    meta = TitleMeta.load(folder)
     rng = random.Random(seed)
-    lines, seg = [], 0
-    for line in (folder / "A" / "index.m3u8").read_text().splitlines():
-        if line.endswith(".ts"):
-            line = (folder / _variant(meta, rng.choice(viewers), seg) / f"{seg:05d}.ts").as_posix()
-            seg += 1
-        lines.append(line)
+    words = {v: deliver.bits(title_id, v) for v in viewers}
+    n = len(words[viewers[0]])
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    listing = Path(out_dir) / f"interleave-{seed}.m3u8"
-    listing.write_text("\n".join(lines) + "\n")
-    out = listing.with_suffix(".mp4")
-    media.run(["-protocol_whitelist", "file", "-i", listing, "-c", "copy",
-               *(["-bsf:a", "aac_adtstoasc"] if meta.has_audio else []), out])
-    return out
+    out = Path(out_dir) / f"interleave-{seed}.mp4"
+    return deliver.assemble(title_id, ["A" if words[rng.choice(viewers)][k] else "B" for k in range(n)], out)
 
 
 def collude_average(copies: list[Path], out_dir: Path) -> Path:

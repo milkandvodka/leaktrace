@@ -2,14 +2,14 @@ import Hls from "hls.js";
 import { Download, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Unauthorized, api } from "./api";
-import type { Title, Viewer } from "./api";
+import type { Session, Title, Viewer } from "./api";
 
 export function Watch({ onAuth }: { onAuth: () => void }) {
   const [titles, setTitles] = useState<Title[]>([]);
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [title, setTitle] = useState("");
   const [viewer, setViewer] = useState("");
-  const [links, setLinks] = useState<{ playlist: string; download: string } | null>(null);
+  const [links, setLinks] = useState<Session | null>(null);
   const [error, setError] = useState("");
   const video = useRef<HTMLVideoElement>(null);
   const fail = (e: unknown) => (e instanceof Unauthorized ? onAuth() : setError(e instanceof Error ? e.message : String(e)));
@@ -24,11 +24,11 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
     if (!el || !links) return;
     if (Hls.isSupported()) {
       const hls = new Hls();
-      hls.loadSource(links.playlist);
+      hls.loadSource(links.hls);
       hls.attachMedia(el);
       return () => hls.destroy();
     }
-    el.src = links.playlist; // Safari plays HLS natively
+    el.src = links.hls; // Safari plays HLS natively
   }, [links]);
 
   const open = () => { setError(""); api.session(title, viewer).then(setLinks).catch(fail); };
@@ -60,6 +60,9 @@ export function Watch({ onAuth }: { onAuth: () => void }) {
           <div className="p-4 flex flex-wrap items-center justify-between gap-3">
             <span className="text-[14px] text-body">This copy belongs to <span className="font-semibold text-ink">{name}</span>. Watching it is logged.</span>
             <a className="btn-ghost" href={links.download}><Download size={16} /> Download their copy</a>
+          </div>
+          <div className="px-4 pb-4 text-[12.5px] text-faint break-all">
+            Same manifests for every viewer, only the token in the path differs: <a className="underline" href={links.hls}>HLS</a> · <a className="underline" href={links.dash}>DASH</a>
           </div>
         </div>
       )}

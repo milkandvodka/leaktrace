@@ -18,13 +18,14 @@ from .attacks import ATTACKS, collude_average, collude_interleave, telegram, tri
 
 
 def _psnr(title_id: str, samples: int = 5) -> float:
-    """Rendition A against the unmarked master, luma PSNR over a few segments."""
+    """Marked master A against the unmarked analysis copy, luma PSNR over a few segments (the cost of marking;
+    the ladder's own encoding loss is the platform's usual)."""
     folder = title_dir(title_id)
     meta = TitleMeta.load(folder)
     errs = []
     for seg in np.linspace(0, meta.marked_segments - 1, samples).round().astype(int):
         g = meta.grid  # both on the analysis canvas, so a 1080p title compares like a 720p one
-        a = media.frames(folder / "A" / f"{seg:05d}.ts", WIDTH, HEIGHT, g.fps)
+        a = media.frames(folder / "masters" / "A.mp4", WIDTH, HEIGHT, g.fps, start=float(g.time(seg)))
         m = media.frames(folder / "mezzanine.mp4", WIDTH, HEIGHT, g.fps, start=float(g.time(seg)))
         for x, y, _ in zip(a, m, range(g.seg_frames)):
             errs.append(((x[:HEIGHT].astype(float) - y[:HEIGHT].astype(float)) ** 2).mean())

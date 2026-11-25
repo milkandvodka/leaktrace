@@ -151,21 +151,21 @@ class AudioReader:
 
 
 class Encoder:
-    """One rendition as HLS: TS segments named 00000.ts... (one per grid segment) and index.m3u8.
+    """A marked master: one MP4 (H.264 at high quality, AAC) with an IDR frame at the start of every segment.
 
-    Frames stream into x264 with an IDR frame forced at the start of every segment and scene-cut detection off,
-    so every rendition of a title has its cuts in the same places. Audio goes to a WAV on disk and is muxed in when
-    the encoder closes; the video is stream-copied then, so the segment boundaries stay on those IDR frames.
+    Frames stream into x264 with the IDR frames forced on the grid and scene-cut detection off, so both variants
+    have their cuts in the same places and every later encode (the ladder, or a platform's own) can cut there too.
+    Audio goes to a WAV on disk and is muxed in when the encoder closes, with the video stream-copied.
     """
 
-    def __init__(self, out_dir: Path, size: tuple[int, int], fps, seg_frames: int, channels: int = 1, crf: int = 20,
+    def __init__(self, out: Path, size: tuple[int, int], fps, seg_frames: int, channels: int = 1, crf: int = 16,
                  preset: str = "medium"):
-        self.dir = Path(out_dir)
-        self.dir.mkdir(parents=True, exist_ok=True)
-        self.with_audio, self.channels, self.seg_s = channels > 0, channels, float(seg_frames / Fraction(fps))
+        self.out = Path(out)
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        self.with_audio, self.channels = channels > 0, channels
         w, h = size
-        self._video = self.dir / "_video.mkv"
-        self._wav_path = self.dir / "_audio.wav"
+        self._video = self.out.with_suffix(".video.mkv")
+        self._wav_path = self.out.with_suffix(".audio.wav")
         self._err = tempfile.TemporaryFile()
         self._proc = subprocess.Popen(
             [tool("ffmpeg"), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{w}x{h}",
@@ -215,12 +215,10 @@ class Encoder:
         if self._wav:
             self._wav.close()
         audio_in = ["-i", self._wav_path] if self.with_audio else []
-        audio_out = ["-map", "1:a", "-c:a", "aac", "-b:a", f"{64 * self.channels}k", "-ar", SR,
+        audio_out = ["-map", "1:a", "-c:a", "aac", "-b:a", f"{160 * self.channels}k", "-ar", SR,
                      "-ac", self.channels] if self.with_audio else []
-        run(["-i", self._video, *audio_in, "-map", "0:v", *audio_out, "-c:v", "copy", "-f", "hls",
-             # -hls_time under a segment: a cut at every IDR frame, which is every segment start
-             "-hls_time", self.seg_s / 2, "-hls_playlist_type", "vod", "-hls_list_size", 0,
-             "-hls_segment_filename", self.dir / "%05d.ts", self.dir / "index.m3u8"])
+        run(["-i", self._video, *audio_in, "-map", "0:v", *audio_out, "-c:v", "copy", "-movflags", "+faststart",
+             self.out])
         self._video.unlink(missing_ok=True)
         self._wav_path.unlink(missing_ok=True)
 

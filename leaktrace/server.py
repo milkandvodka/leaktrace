@@ -4,13 +4,16 @@ Admin API (Authorization: Bearer LEAKTRACE_ADMIN_TOKEN):
   POST /api/titles (multipart: id, name, file)    package a title (background job)
   GET  /api/titles
   POST /api/viewers {"viewers": [{"id", "name"}]}   GET /api/viewers
-  POST /api/sessions {"title", "viewer"}           a viewer's signed playlist and download URLs
+  POST /api/sessions {"title", "viewer"}           a viewer's token: HLS, DASH and download URLs (logged as a view)
   POST /api/traces   (multipart: file, first_seen?)   trace a leak (background job)
   GET  /api/traces   GET /api/traces/{id}   GET /api/jobs/{id}   GET /api/bench/latest
 
-Viewer-facing (what a platform's player and download button would point at):
-  GET /play/{token}.m3u8   the viewer's playlist (logged as a view)
-  GET /s/{token}           one segment (the variant is decided here, never visible in the URL)
+Viewer-facing (what a platform's player and download button point at):
+  GET /wm/{token}/{title}/master.m3u8 | manifest.mpd   shared manifests; segments under them are mapped to the
+                           viewer's variant from the token (what a CDN edge function does in production, edge/)
+  GET /pl/{token}/{title}/master.m3u8 | manifest.mpd   the same manifests listing the viewer's objects directly,
+                           under LEAKTRACE_MEDIA_URL (for CDNs without edge code)
+  GET /media/{title}/{object}   the objects themselves (unguessable names; a bucket or CDN serves these in production)
   GET /download/{token}    the viewer's own MP4 (logged as a download)
 
 Run: uvicorn leaktrace.server:app --port 8003
@@ -29,11 +32,11 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel, StringConstraints
 
-from . import deliver
+from . import deliver, edge
 from .config import ROOT, settings
 from .ingest import ingest, title_dir
 from .jobs import Jobs
@@ -103,7 +106,7 @@ class SessionIn(BaseModel):
     viewer: Annotated[str, AfterValidator(_sid)]
 
 
-# signed session tokens for the playlist and download links
+# signed tokens for download links
 def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
@@ -176,8 +179,7 @@ def add_title(id: Annotated[str, Form()], name: Annotated[str, Form()], file: An
         except Exception:
             store().set_title(id, "failed")
             raise
-        store().set_title(id, "ready", {"duration": meta.duration, "segments": meta.n_segments,
-                                          "marked": meta.marked_segments, "has_audio": meta.has_audio})
+        store().set_title(id, "ready", meta.summary())
         return {"title": id}
 
     return {"job": jobs().submit("ingest", run, {"title": id})}
@@ -197,34 +199,58 @@ def add_viewers(body: ViewersIn) -> dict:
 
 @app.post("/api/sessions", dependencies=[Admin])
 def session(body: SessionIn) -> dict:
-    if not (title_dir(body.title) / "meta.json").exists():  # packaged files are the truth (API or CLI)
+    if not (title_dir(body.title) / "cmaf" / "tracks.json").exists():  # packaged files are the truth (API or CLI)
         raise HTTPException(404, "No such title (or it isn't packaged yet).")
     if body.viewer not in set(store().viewer_ids()):
         raise HTTPException(404, "No such viewer.")
-    token = _session_token(body.title, body.viewer)
+    store().log_view(body.viewer, body.title, "session")
     # Relative links: right behind any proxy or CDN, whatever host and scheme the viewer reached us on.
-    return {"playlist": f"/play/{token}.m3u8", "download": f"/download/{token}"}
+    s = deliver.session(body.title, body.viewer)
+    return {**s, "direct": {"hls": f"/pl/{s['token']}/{body.title}/master.m3u8",
+                            "dash": f"/pl/{s['token']}/{body.title}/manifest.mpd"},
+            "download": f"/download/{_session_token(body.title, body.viewer)}"}
 
 
-@app.get("/play/{token}.m3u8")
-def play(token: str) -> PlainTextResponse:
-    title, viewer = _open_session(token)
-    store().log_view(viewer, title, "play")
-    text = deliver.playlist(title, viewer, "")
-    return PlainTextResponse(text, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "no-store"})
+_TYPES = {".m3u8": "application/vnd.apple.mpegurl", ".mpd": "application/dash+xml", ".mp4": "video/mp4",
+          ".m4s": "video/iso.segment"}
 
 
-@app.get("/s/{token}")
-def segment(token: str) -> FileResponse:
+@app.get("/wm/{path:path}")
+def watermarked(path: str) -> FileResponse:
+    """Shared manifests and objects for a viewer's token; the same mapping a CDN edge function makes."""
     try:
-        path = deliver.resolve(token)
-    except deliver.TokenError:
-        raise HTTPException(403, "Invalid segment link.")
-    except FileNotFoundError:
-        raise HTTPException(404, "No such title.")
-    if not path.exists():
-        raise HTTPException(404, "Segment missing.")
-    return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "private, max-age=3600"})
+        file = deliver.resolve(path)
+    except edge.Denied as e:
+        raise HTTPException(e.status, "This link has expired or isn't valid." if e.status == 403 else "Not found.")
+    if not file.exists():
+        raise HTTPException(404, "Not found.")
+    manifest = file.suffix in (".m3u8", ".mpd")
+    return FileResponse(file, media_type=_TYPES.get(file.suffix, "application/octet-stream"),
+                        headers={"Cache-Control": "public, max-age=60" if manifest else "public, max-age=31536000, immutable",
+                                 "Access-Control-Allow-Origin": "*"})
+
+
+@app.get("/pl/{path:path}")
+def per_viewer(path: str) -> Response:
+    """The viewer's own manifests: the shared ones with each segment URL pointing at that viewer's object."""
+    try:
+        text, mime = deliver.viewer_manifest(path)
+    except edge.Denied as e:
+        raise HTTPException(e.status, "This link has expired or isn't valid." if e.status == 403 else "Not found.")
+    return Response(text, media_type=mime, headers={"Cache-Control": "private, no-store", "Access-Control-Allow-Origin": "*"})
+
+
+OBJECT = re.compile(r"^([0-9a-f]{32}\.m4s|[a-z0-9]+-init\.mp4)$")
+
+
+@app.get("/media/{title}/{name}")
+def media_object(title: str, name: str) -> FileResponse:
+    """A packaged object: segments and init segments only, never manifests or tracing files."""
+    file = title_dir(title) / "cmaf" / name if ID.match(title) and OBJECT.match(name) else None
+    if file is None or not file.exists():
+        raise HTTPException(404, "Not found.")
+    return FileResponse(file, media_type=_TYPES[file.suffix], headers={"Cache-Control": "public, max-age=31536000, immutable",
+                                                                         "Access-Control-Allow-Origin": "*"})
 
 
 @app.get("/download/{token}")

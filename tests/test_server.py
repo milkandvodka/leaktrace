@@ -40,27 +40,50 @@ def test_admin_requires_token(client):
     assert client.get("/api/titles", headers=ADMIN).status_code == 200
 
 
-def test_session_playlist_segments_and_view_log(client, packaged):
+def test_session_manifests_segments_and_view_log(client, packaged):
     assert client.post("/api/viewers", json={"viewers": [{"id": "s00042", "name": "Asha Rao"}]}, headers=ADMIN).status_code == 200
     r = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN)
     assert r.status_code == 200
-    play = r.json()["playlist"]
-    assert play.startswith("/play/") and r.json()["download"].startswith("/download/")  # relative: works behind a proxy
-    text = client.get(play).text
-    seg_urls = [l for l in text.splitlines() if "/s/" in l]
-    assert text.startswith("#EXTM3U") and len(seg_urls) == packaged[1].n_segments == 20
-    seg = client.get(seg_urls[0][seg_urls[0].index("/s/"):])
-    assert seg.status_code == 200 and seg.content[:1] == b"\x47"  # MPEG-TS sync byte
+    hls, dash = r.json()["hls"], r.json()["dash"]
+    assert hls.startswith("/wm/") and r.json()["download"].startswith("/download/")  # relative: works behind a proxy
+    master = client.get(hls)
+    assert master.status_code == 200 and master.text.startswith("#EXTM3U") and master.headers["access-control-allow-origin"] == "*"
+    base = hls.rsplit("/", 1)[0]
+    media_pl = client.get(f"{base}/v720.m3u8").text
+    seg_urls = [l for l in media_pl.splitlines() if l.endswith(".m4s")]
+    assert len(seg_urls) == packaged[1].n_segments == 20
+    seg = client.get(f"{base}/{seg_urls[0]}")
+    assert seg.status_code == 200 and b"moof" in seg.content[:256] and "immutable" in seg.headers["cache-control"]
+    assert client.get(f"{base}/v720/init.mp4").content[4:8] == b"ftyp"
+    assert client.get(dash).text.lstrip().startswith("<?xml")
     from leaktrace import server
     assert "s00042" in server.store().watched_by("lec40")
 
 
-def test_segment_token_cannot_be_swapped(client):
-    play = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN).json()["playlist"]
-    url = [l for l in client.get(play).text.splitlines() if "/s/" in l][2]
-    path = url[url.index("/s/"):]
-    assert client.get(path[:-3] + ("AAA" if not path.endswith("AAA") else "BBB")).status_code == 403
-    assert client.get("/s/garbage").status_code == 403
+def test_altered_or_foreign_tokens_get_403(client):
+    hls = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN).json()["hls"]
+    token = hls.split("/")[2]
+    exp, bits, sig = token.split(".")
+    flipped = bits[:-1] + ("A" if bits[-1] != "A" else "B")
+    assert client.get(f"/wm/{exp}.{flipped}.{sig}/lec40/v720/00002.m4s").status_code == 403
+    assert client.get("/wm/garbage/lec40/master.m3u8").status_code == 403
+    assert client.get(f"/wm/{token}/lec40/meta.json").status_code == 404  # tracing files are never served
+
+
+def test_per_viewer_manifests_and_media_objects(client, packaged):
+    r = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN).json()
+    direct = r["direct"]["hls"]
+    assert direct.startswith("/pl/") and client.get(direct).status_code == 200
+    media_pl = client.get(direct.rsplit("/", 1)[0] + "/v720.m3u8")
+    assert media_pl.headers["cache-control"] == "private, no-store"
+    urls = [l for l in media_pl.text.splitlines() if l.endswith(".m4s")]
+    assert len(urls) == packaged[1].n_segments and all(u.startswith("/media/lec40/") for u in urls)
+    assert r["token"] not in media_pl.text  # segment URLs carry no token: plain cacheable objects
+    seg = client.get(urls[3])
+    assert seg.status_code == 200 and "immutable" in seg.headers["cache-control"]
+    assert client.get(f"/pl/{r['token']}/lec40/manifest.mpd").text.count("<SegmentURL") == 4 * packaged[1].n_segments
+    for bad in ("meta.json", "mezzanine.mp4", "master.m3u8", "tracks.json", "fp.npz"):
+        assert client.get(f"/media/lec40/{bad}").status_code == 404, bad
 
 
 def test_unknown_title_or_viewer_rejected(client):

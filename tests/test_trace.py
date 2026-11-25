@@ -36,17 +36,19 @@ def lec150(tmp_path_factory):
     from leaktrace.ingest import ingest
     from leaktrace.synth import make_title
     data = CACHE / f"data150-{_code_hash()}"
-    os.environ["LEAKTRACE_DATA"] = str(data)
+    mp = pytest.MonkeyPatch()  # restored after this module, so later tests see their own data dir
+    mp.setenv("LEAKTRACE_DATA", str(data))
     master = CACHE / "title_150s.mp4"
     if not master.exists():
         make_title(master, seconds=150, seed=5, tts=False)
     if not (data / "titles" / "lec150" / "meta.json").exists():
-        ingest(master, "lec150", "Pharmacology 1", preset="veryfast")
+        ingest(master, "lec150", "Sample 150 s", preset="veryfast")
     store = Store(tmp_path_factory.mktemp("db") / "db.sqlite")
     for s in VIEWERS:
         store.add_viewer(s, s)
         store.log_view(s, "lec150", "play", at="2026-11-01T00:00:00")
-    return store
+    yield store
+    mp.undo()
 
 
 @pytest.mark.slow
@@ -85,7 +87,8 @@ def test_foreign_video_not_ours(lec150, tmp_path):
 def test_muted_export_traced_by_picture(lec150, tmp_path):
     muted = tmp_path / "muted.mp4"
     media.run(["-i", deliver.export("lec150", LEAKER), "-an", "-c:v", "copy", muted])
-    r = trace(muted, lec150)
+    r = trace(muted, lec150)  # the library also holds the same picture as ntsc150: the marks decide which it is
+    assert r.title is not None and r.title["id"] == "lec150", r.title
     assert r.suspects[0]["viewer"] == LEAKER and r.verdict in ("narrowed", "identified"), (r.verdict, r.suspects[:3])
     assert r.carriers["timing"]["weight"] == 0 or r.carriers["timing"]["mean_z"] == 0
 

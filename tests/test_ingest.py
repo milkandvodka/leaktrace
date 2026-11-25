@@ -24,35 +24,31 @@ def short_master():
 
 @pytest.fixture(scope="module")
 def ingested(short_master, tmp_path_factory):
-    import os
     data = tmp_path_factory.mktemp("data")
-    os.environ["LEAKTRACE_DATA"] = str(data)
-    meta = ingest(short_master, "lec-short", "Short title", preset="veryfast")
+    with pytest.MonkeyPatch.context() as mp:  # restored afterwards: later modules use the session's data dir
+        mp.setenv("LEAKTRACE_DATA", str(data))
+        meta = ingest(short_master, "lec-short", "Short title", preset="veryfast")
     return data / "titles" / "lec-short", meta
 
 
-def _segments(d):
-    lines = (d / "index.m3u8").read_text().splitlines()
-    return [l for l in lines if l.startswith("#EXTINF")], [l for l in lines if l.endswith(".ts")]
+def keyframes(path):
+    """Indexes of the key frames (decode order), and the frame count."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=flags", "-of",
+                          "csv=p=0", str(path)], capture_output=True, text=True, check=True).stdout.split()
+    return [i for i, f in enumerate(out) if f.startswith("K")], len(out)
 
 
-def _start(ts):
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=start_time", "-of", "csv=p=0", str(ts)],
-                         capture_output=True, text=True, check=True).stdout
-    return float(out.strip())
-
-
-def test_ingest_makes_twin_renditions(ingested):
+def test_ingest_makes_twin_masters_with_a_key_frame_at_every_segment(ingested):
     d, meta = ingested
-    (ea, sa), (eb, sb) = _segments(d / "A"), _segments(d / "B")
-    assert ea == eb and sa == sb and len(sa) == meta.n_segments == 3 and meta.marked_segments == 2
-    for name in sa:
-        assert abs(_start(d / "A" / name) - _start(d / "B" / name)) < 1e-6
-    for name in sa[:2]:
-        assert (d / "A" / name).read_bytes() != (d / "B" / name).read_bytes()
+    a, b = d / "masters" / "A.mp4", d / "masters" / "B.mp4"
+    assert meta.n_segments == 3 and meta.marked_segments == 2
+    for m in (a, b):
+        assert keyframes(m) == ([0, 50, 100], meta.n_frames)
+    assert a.read_bytes() != b.read_bytes()
     saved = json.loads((d / "meta.json").read_text())
     assert saved["id"] == "lec-short" and len(saved["timing"]) == 3 and saved["timing"][2] is None
-    assert (d / "mezzanine.mp4").exists()
+    assert saved["grid"] == {"fps": "25", "seg_frames": 50} and saved["ladder"] == ["v720", "v480", "v360"]
+    assert (d / "mezzanine.mp4").exists() and (d / "cmaf" / "tracks.json").exists()
 
 
 def _decode(path, start, n):
@@ -60,15 +56,15 @@ def _decode(path, start, n):
 
 
 def test_partial_tail_unmarked(ingested):
-    d, _ = ingested
-    a = _decode(d / "A" / "00002.ts", 0, 10)
-    b = _decode(d / "B" / "00002.ts", 0, 10)
+    d, meta = ingested
+    a = _decode(d / "masters" / "A.mp4", 2 * meta.grid.seconds, 10)
+    b = _decode(d / "masters" / "B.mp4", 2 * meta.grid.seconds, 10)
     assert np.mean([np.abs(x - y).mean() for x, y in zip(a, b)]) < 0.5
 
 
 def test_imperceptible(ingested):
     d, meta = ingested
-    a = media.frames(d / "A" / "00001.ts", WIDTH, HEIGHT, 25)
+    a = media.frames(d / "masters" / "A.mp4", WIDTH, HEIGHT, 25, start=meta.grid.seconds)
     m = media.frames(d / "mezzanine.mp4", WIDTH, HEIGHT, 25, start=meta.grid.seconds)
     err = [((x[:HEIGHT].astype(float) - y[:HEIGHT].astype(float)) ** 2).mean()
            for x, y, _ in zip(a, m, range(meta.grid.seg_frames))]
@@ -82,8 +78,9 @@ def test_silent_master_ingests_picture_only(short_master, tmp_path, monkeypatch)
     meta = ingest(muted, "lec-muted", "Muted", preset="veryfast")
     d = tmp_path / "titles" / "lec-muted"
     assert not meta.has_audio and meta.marked_segments >= 1 and meta.timing[0] is None
-    assert not media.probe(d / "A" / "00000.ts").has_audio
-    assert (d / "A" / "00000.ts").read_bytes() != (d / "B" / "00000.ts").read_bytes()
+    assert not media.probe(d / "masters" / "A.mp4").has_audio
+    assert [t["kind"] for t in json.loads((d / "cmaf" / "tracks.json").read_text())["tracks"]] == ["video"] * 3
+    assert (d / "masters" / "A.mp4").read_bytes() != (d / "masters" / "B.mp4").read_bytes()
 
 
 def test_store_views_and_viewers(tmp_path):
@@ -115,12 +112,6 @@ def test_canvas_keeps_the_source_size_up_to_the_cap(monkeypatch):
     assert canvas_size(_probe(853, 480)) == (852, 480)  # 4:2:0 needs even sizes
 
 
-def _frames_in(path):
-    out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
-                          "stream=nb_read_frames", "-of", "csv=p=0", str(path)], capture_output=True, text=True, check=True)
-    return int(out.stdout.split()[0])  # TS files list the stream once per program
-
-
 def _package(title_40s, tmp_path_factory, name, vf, channels, seconds):
     d = tmp_path_factory.mktemp(name)
     src = d / "src.mp4"
@@ -141,12 +132,15 @@ def ntsc_title(title_40s, tmp_path_factory):
 def test_a_2997_fps_1080p_stereo_title_is_packaged_on_its_own_grid(ntsc_title):
     folder, meta = ntsc_title
     assert meta.grid == Grid(NTSC, 60) and meta.canvas == [1920, 1080] and meta.channels == 2
-    seg = folder / "A" / "00001.ts"
-    p = media.probe(seg)
+    p = media.probe(folder / "masters" / "A.mp4")
     assert (p.width, p.height, p.rate, p.channels) == (1920, 1080, NTSC, 2)
-    assert _frames_in(seg) == 60
+    assert keyframes(folder / "masters" / "A.mp4")[0] == list(range(0, meta.n_frames, 60))
     assert meta.n_segments == -(-meta.n_frames // 60) == len(meta.timing) and meta.marked_segments == meta.n_frames // 60
-    assert (folder / "A" / "00000.ts").read_bytes() != (folder / "B" / "00000.ts").read_bytes()
+    top = json.loads((folder / "cmaf" / "tracks.json").read_text())["tracks"][0]
+    assert (top["id"], top["width"], top["height"]) == ("v1080", 1920, 1080)
+    assert [s["frames"] for s in top["segments"][: meta.marked_segments]] == [60] * meta.marked_segments
+    sm = meta.summary()
+    assert (sm["size"], sm["fps"], sm["ladder"]) == ("1920x1080", "29.97", ["v1080", "v720", "v480", "v360"])
 
 
 def test_a_24_fps_title_smaller_than_the_cap_keeps_its_size(title_40s, tmp_path_factory):
