@@ -20,7 +20,6 @@ COPY --from=ui /ui/dist frontend/dist
 ENV LEAKTRACE_DATA=/data PYTHONUNBUFFERED=1
 RUN mkdir /data && chown leaktrace /data
 USER leaktrace
-VOLUME /data
 EXPOSE 8003
 # LEAKTRACE_SECRET and LEAKTRACE_ADMIN_TOKEN come from the environment at run time, never the image. Hosts like
 # Railway set PORT; 8003 is the fallback for a plain `docker run`.
