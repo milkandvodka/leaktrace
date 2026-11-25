@@ -10,11 +10,10 @@ of the leak minus those of the unmarked master, once the master has been lined u
 import numpy as np
 from scipy.signal import istft, stft
 
-from ..config import BUDGET, SEG_SECONDS
+from ..config import BUDGET
 from .patterns import code, rng, tukey
 
 TILE_S, BAND_HZ, LO_HZ, HI_HZ = 0.08, 200, 300, 3300
-N_TILES = round(SEG_SECONDS / TILE_S)  # 24
 N_BANDS = (HI_HZ - LO_HZ) // BAND_HZ   # 15
 SPEC_WIN_S, SPEC_HOP_S = 0.032, 0.010
 DECOYS = 16
@@ -23,15 +22,20 @@ _CENTRES = LO_HZ + BAND_HZ * (np.arange(N_BANDS) + 0.5)
 _LOW, _HIGH = _CENTRES < TILT_HZ, _CENTRES > TILT_HZ
 
 
-def _pattern(key: bytes, title: str, seg: int, decoy: int | None = None) -> np.ndarray:
+def n_tiles(seg_s: float) -> int:
+    """80 ms time tiles in a segment: 24 for 1.92 s, 25 for 2.0 and 2.002 s."""
+    return max(1, round(seg_s / TILE_S))
+
+
+def _pattern(key: bytes, title: str, seg: int, decoy: int | None, tiles: int) -> np.ndarray:
     """+/-1 per tile, balanced so that in every time tile the low bands sum to 0 and the high bands sum to 0
     (a group with an odd count gets one 0). Patchwork then adds nothing to the loudness or tilt measurements."""
     g = rng(key, *(("patch", title, seg) if decoy is None else ("patch-decoy", title, decoy)))  # decoys: per title
-    W = np.zeros((N_TILES, N_BANDS))
+    W = np.zeros((tiles, N_BANDS))
     for group in (np.flatnonzero(_LOW), np.flatnonzero(_HIGH)):
         k = len(group)
         base = np.array([1.0] * (k // 2) + [-1.0] * (k // 2) + [0.0] * (k % 2))
-        for t in range(N_TILES):
+        for t in range(tiles):
             W[t, group] = g.permutation(base)
     return W
 
@@ -43,23 +47,28 @@ def _flat_top(frac: np.ndarray) -> np.ndarray:
 
 
 def embed(x: np.ndarray, sr: int, margin: float, key: bytes, title: str, seg: int, sign: int) -> np.ndarray:
-    """Apply all three carriers to the segment in x (which has `margin` seconds of context each side)."""
+    """Apply all three carriers to the segment in x (which has `margin` seconds of context each side), mono (n,)
+    or with channels (n, c): every channel gets the same marks."""
+    if np.ndim(x) == 2:
+        return np.stack([embed(x[:, c], sr, margin, key, title, seg, sign) for c in range(x.shape[1])], 1)
     m = round(margin * sr)
     n = len(x) - 2 * m
+    seg_s = n / sr
+    tiles = n_tiles(seg_s)
     nfft = 2048 if sr >= 32000 else 512
     hop = nfft // 4
     f, t, Z = stft(x, sr, window="hann", nperseg=nfft, noverlap=nfft - hop, boundary="even", padded=True)
-    u = (t - margin) / SEG_SECONDS  # 0..1 across the segment
+    u = (t - margin) / seg_s  # 0..1 across the segment
     inside = (u > 0) & (u < 1)
 
     # patchwork: tile signs on the STFT grid, flat across each tile with a short crossfade at tile edges
-    W = _pattern(key, title, seg)
-    ti = np.clip(u * N_TILES - 0.5, 0, N_TILES - 1)
+    W = _pattern(key, title, seg, None, tiles)
+    ti = np.clip(u * tiles - 0.5, 0, tiles - 1)
     bi = (f - LO_HZ) / BAND_HZ - 0.5
     in_band = (f >= LO_HZ - BAND_HZ / 2) & (f <= HI_HZ + BAND_HZ / 2)
     bi = np.clip(bi, 0, N_BANDS - 1)
     t0, b0 = np.floor(ti).astype(int), np.floor(bi).astype(int)
-    t1, b1 = np.minimum(t0 + 1, N_TILES - 1), np.minimum(b0 + 1, N_BANDS - 1)
+    t1, b1 = np.minimum(t0 + 1, tiles - 1), np.minimum(b0 + 1, N_BANDS - 1)
     ft, fb = _flat_top(ti - t0), _flat_top(bi - b0)
     smooth = ((1 - fb)[:, None] * ((1 - ft) * W[t0][:, b0].T + ft * W[t1][:, b0].T)
               + fb[:, None] * ((1 - ft) * W[t0][:, b1].T + ft * W[t1][:, b1].T))
@@ -111,7 +120,7 @@ def _fit_code(v: np.ndarray, u: np.ndarray, w: np.ndarray) -> tuple[float, float
     return float(beta[2]), float(np.sqrt(cov[2, 2]))
 
 
-def measure(leak_spec: np.ndarray, mezz_spec: np.ndarray, key: bytes, title: str, seg: int) -> dict:
+def measure(leak_spec: np.ndarray, mezz_spec: np.ndarray, key: bytes, title: str, seg: int, seg_s: float) -> dict:
     """Evidence from each audio carrier as (estimate, standard error); estimate / error is a z-score, positive
     for rendition A. Both spectra cover just this segment and are already on the same timeline."""
     n = min(len(leak_spec), len(mezz_spec))
@@ -120,27 +129,28 @@ def measure(leak_spec: np.ndarray, mezz_spec: np.ndarray, key: bytes, title: str
     # each cell's difference is clamped so one transient or codec glitch can't outweigh the rest.
     cell = np.clip((mz - (mz.max() - 45)) / 20, 0, 1)  # 0 below -45 dB, full weight from -25 dB up
     D = np.clip(leak_spec[:n] - mz, -6, 6) * cell
-    u = _frame_times(n) / SEG_SECONDS
+    u = _frame_times(n) / seg_s
+    tiles = n_tiles(seg_s)
     per_frame = cell.sum(axis=1)
     w = (per_frame >= N_BANDS // 2).astype(np.float64)  # frames where someone is talking across most bands
     if w.sum() < 10:
         return {name: (0.0, float("inf")) for name in ("patchwork", "loudness", "tilt")}
 
     # patchwork: average D per tile, remove each tile row's and column's mean, correlate with the keyed pattern
-    tile = np.clip((u * N_TILES).astype(int), 0, N_TILES - 1)
-    sums, counts = np.zeros((N_TILES, N_BANDS)), np.zeros((N_TILES, N_BANDS))
+    tile = np.clip((u * tiles).astype(int), 0, tiles - 1)
+    sums, counts = np.zeros((tiles, N_BANDS)), np.zeros((tiles, N_BANDS))
     np.add.at(sums, tile, D)
     np.add.at(counts, tile, cell)
     valid = counts.min(axis=1) > 0
     T = sums[valid] / counts[valid]
     T = T - T.mean(axis=0, keepdims=True) - T.mean(axis=1, keepdims=True) + T.mean()
-    env = tukey((np.arange(N_TILES) + 0.5) / N_TILES)[valid][:, None]
-    P = _pattern(key, title, seg)[valid] * env
+    env = tukey((np.arange(tiles) + 0.5) / tiles)[valid][:, None]
+    P = _pattern(key, title, seg, None, tiles)[valid] * env
     stat = float(np.sum(T * P))
     # Noise comes from decoy patterns (keys never embedded) correlated with what's left once the real pattern's
     # fitted contribution is removed; otherwise a strong mark inflates its own noise estimate.
     resid = T - stat / max(float(np.sum(P * P)), 1e-12) * P
-    decoys = np.array([float(np.sum(resid * _pattern(key, title, seg, j)[valid] * env)) for j in range(DECOYS)])
+    decoys = np.array([float(np.sum(resid * _pattern(key, title, seg, j, tiles)[valid] * env)) for j in range(DECOYS)])
     patch = (stat - decoys.mean(), float(decoys.std(ddof=1)) or float("inf"))
 
     def band_mean(cols):

@@ -21,7 +21,9 @@ from PIL import Image, ImageDraw, ImageFont
 from scipy.io import wavfile
 from scipy.signal import lfilter
 
-from .config import FPS, HEIGHT, SR, WIDTH, tool
+from .config import HEIGHT, SR, WIDTH, tool
+
+FPS = 25  # synthetic titles: 1280x720 at 25 fps, 48 kHz mono
 
 SLIDES = [
     ("Beta blockers", ["Block beta-1 receptors in the heart", "Lower heart rate and contractility",

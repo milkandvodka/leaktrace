@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import deliver, media
-from ..config import HEIGHT, SEG_FRAMES, WIDTH, settings
+from ..config import HEIGHT, WIDTH, settings
 from ..ingest import TitleMeta, title_dir
 from ..store import Store, now
 from ..trace import trace
@@ -23,9 +23,10 @@ def _psnr(title_id: str, samples: int = 5) -> float:
     meta = TitleMeta.load(folder)
     errs = []
     for seg in np.linspace(0, meta.marked_segments - 1, samples).round().astype(int):
-        a = media.frames(folder / "A" / f"{seg:05d}.ts", WIDTH, HEIGHT, 25)
-        m = media.frames(folder / "mezzanine.mp4", WIDTH, HEIGHT, 25, start=seg * 1.92)
-        for x, y, _ in zip(a, m, range(SEG_FRAMES)):
+        g = meta.grid  # both on the analysis canvas, so a 1080p title compares like a 720p one
+        a = media.frames(folder / "A" / f"{seg:05d}.ts", WIDTH, HEIGHT, g.fps)
+        m = media.frames(folder / "mezzanine.mp4", WIDTH, HEIGHT, g.fps, start=float(g.time(seg)))
+        for x, y, _ in zip(a, m, range(g.seg_frames)):
             errs.append(((x[:HEIGHT].astype(float) - y[:HEIGHT].astype(float)) ** 2).mean())
     return round(float(10 * np.log10(255 ** 2 / np.mean(errs))), 1)
 

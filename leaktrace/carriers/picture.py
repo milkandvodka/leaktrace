@@ -44,15 +44,16 @@ def _eval(params, xn: np.ndarray, yn: np.ndarray) -> np.ndarray:
 
 @lru_cache(maxsize=512)
 def pattern(key: bytes, name: str, title: str, seg: int, decoy: int | None, w: int, h: int,
-            box: tuple[int, int, int, int]) -> np.ndarray:
-    """A carrier's pattern on a w x h grid of the WIDTH x HEIGHT canvas, in [-1, 1] inside the content box and
-    0 outside it. The same pattern at any resolution, because it is defined on the content's own coordinates."""
+            box: tuple[int, int, int, int], canvas: tuple[int, int] = (WIDTH, HEIGHT)) -> np.ndarray:
+    """A carrier's pattern on a w x h grid of a canvas (box is in canvas pixels), in [-1, 1] inside the content
+    box and 0 outside it. The same pattern at any resolution, because it is defined on the content's own
+    coordinates: a title marked at 1920x1080 is measured on the 1280x720 analysis canvas."""
     params = _params(key, name, title, seg, decoy)
     ref = np.linspace(0, 1, _REF)
     peak = np.abs(_eval(params, ref, ref)).max() or 1.0
     bx, by, bw, bh = box
-    xn = ((np.arange(w) + 0.5) * WIDTH / w - bx) / bw
-    yn = ((np.arange(h) + 0.5) * HEIGHT / h - by) / bh
+    xn = ((np.arange(w) + 0.5) * canvas[0] / w - bx) / bw
+    yn = ((np.arange(h) + 0.5) * canvas[1] / h - by) / bh
     p = _eval(params, xn, yn) / peak
     p *= ((yn >= 0) & (yn <= 1))[:, None] & ((xn >= 0) & (xn <= 1))[None, :]
     p = p.astype(np.float32)
@@ -61,23 +62,24 @@ def pattern(key: bytes, name: str, title: str, seg: int, decoy: int | None, w: i
 
 
 def _planes(yuv: np.ndarray):
-    h, w = HEIGHT, WIDTH
+    h, w = yuv.shape[0] * 2 // 3, yuv.shape[1]
     return (yuv[:h], yuv[h: h + h // 4].reshape(h // 2, w // 2), yuv[h + h // 4:].reshape(h // 2, w // 2))
 
 
 @lru_cache(maxsize=64)
-def _gains(key: bytes, title: str, seg: int, box: tuple[int, int, int, int]):
+def _gains(key: bytes, title: str, seg: int, box: tuple[int, int, int, int], canvas: tuple[int, int]):
     """Each carrier's per-pixel strength for one segment: brightness and contrast on the luma grid; saturation,
     hue and tint on the chroma grid. Computed once per segment, used for every frame."""
-    lp = lambda n: pattern(key, n, title, seg, None, WIDTH, HEIGHT, box)  # noqa: E731
-    cp = lambda n: pattern(key, n, title, seg, None, WIDTH // 2, HEIGHT // 2, box)  # noqa: E731
+    w, h = canvas
+    lp = lambda n: pattern(key, n, title, seg, None, w, h, box, canvas)  # noqa: E731
+    cp = lambda n: pattern(key, n, title, seg, None, w // 2, h // 2, box, canvas)  # noqa: E731
     return (BUDGET.brightness * lp("brightness"), BUDGET.contrast * lp("contrast"), BUDGET.saturation * cp("saturation"),
             np.float32(np.deg2rad(BUDGET.hue_deg)) * cp("hue"), BUDGET.tint * cp("tint_u"), BUDGET.tint * cp("tint_v"))
 
 
-def prepare(box, key: bytes, title: str, seg: int) -> None:
-    """Compute a segment's patterns ahead of marking its frames in parallel."""
-    _gains(key, title, seg, tuple(int(v) for v in box))
+def prepare(box, key: bytes, title: str, seg: int, canvas: tuple[int, int]) -> None:
+    """Compute a segment's patterns ahead of marking its frames (canvas w x h) in parallel."""
+    _gains(key, title, seg, tuple(int(v) for v in box), tuple(canvas))
 
 
 def delta(yuv: np.ndarray, t_frac: float, box, key: bytes, title: str, seg: int) -> np.ndarray | None:
@@ -87,9 +89,9 @@ def delta(yuv: np.ndarray, t_frac: float, box, key: bytes, title: str, seg: int)
     s = np.float32(code(t_frac))
     if s == 0:
         return None
-    kb, kc, ks, kh, ku, kv = _gains(key, title, seg, tuple(int(v) for v in box))
+    h, w = yuv.shape[0] * 2 // 3, yuv.shape[1]
+    kb, kc, ks, kh, ku, kv = _gains(key, title, seg, tuple(int(v) for v in box), (w, h))
     Y, U, V = _planes(yuv)
-    h, w = HEIGHT, WIDTH
     d = np.empty(yuv.shape, np.float32)
     dY, dU, dV = d[:h], d[h: h + h // 4].reshape(h // 2, w // 2), d[h + h // 4:].reshape(h // 2, w // 2)
     np.subtract(Y, np.float32(128), out=dY, dtype=np.float32)  # in place: a frame is 1.4 M values
@@ -119,7 +121,7 @@ def apply(yuv: np.ndarray, d: np.ndarray | None, sign: int) -> np.ndarray:
 
 
 def embed(yuv: np.ndarray, t_frac: float, box, key: bytes, title: str, seg: int, sign: int) -> np.ndarray:
-    """One frame (YUV420, WIDTH x HEIGHT) at position t_frac (0..1) inside segment `seg`, marked for rendition
+    """One frame (YUV420, any size; box in its pixels) at position t_frac (0..1) inside segment `seg`, marked for rendition
     A (sign +1) or B (sign -1). Returns a new array."""
     return apply(yuv, delta(yuv, t_frac, box, key, title, seg), sign)
 
@@ -131,8 +133,9 @@ def to_analysis(yuv: np.ndarray) -> np.ndarray:
 
 
 def gray_small(yuv: np.ndarray) -> np.ndarray:
-    """Luma at half size (640x360) for feature-based registration."""
-    return cv2.resize(yuv[:HEIGHT], (WIDTH // 2, HEIGHT // 2), interpolation=cv2.INTER_AREA)
+    """Luma at half size (640x360 on the analysis canvas) for feature-based registration."""
+    h, w = yuv.shape[0] * 2 // 3, yuv.shape[1]
+    return cv2.resize(yuv[:h], (w // 2, h // 2), interpolation=cv2.INTER_AREA)
 
 
 _ORB = None

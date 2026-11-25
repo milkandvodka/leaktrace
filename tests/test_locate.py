@@ -1,6 +1,5 @@
 import numpy as np
 from leaktrace import media
-from leaktrace.config import SEG_SECONDS
 from leaktrace.locate import locate
 
 
@@ -17,8 +16,9 @@ def test_locates_clip_by_audio(packaged, rendition_a, tmp_path):
     # rendition A's content is shifted by up to 30 ms by design (timing carrier) and AAC adds ~21 ms of delay;
     # the per-segment alignment downstream searches +-60 ms
     assert abs(loc.offset - 7.3) < 0.06 and abs(loc.speed - 1.0) < 0.01
-    first = int((7.3 + SEG_SECONDS - 1e-9) // SEG_SECONDS)
-    assert loc.segments[0] == first and loc.segments[-1] <= int((7.3 + 30) // SEG_SECONDS) - 1
+    T = packaged[1].grid.seconds
+    first = int((7.3 + T - 1e-9) // T)
+    assert loc.segments[0] == first and loc.segments[-1] <= int((7.3 + 30) // T) - 1
 
 
 def test_locates_speeded_clip(packaged, rendition_a, tmp_path):

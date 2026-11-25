@@ -24,14 +24,14 @@ from .carriers import audio as acar
 from .carriers import picture as pcar
 from .carriers import timing as tcar
 from .codes import accuse
-from .config import FPS, HEIGHT, SEG_FRAMES, SEG_SECONDS, WIDTH, settings
+from .config import HEIGHT, WIDTH, settings
 from .fuse import CARRIERS, fuse
 from .ingest import MARGIN, TitleMeta
 from .locate import Location, locate_all
 from .store import Store, now
 
 AUDIO_SR = 8000             # everything audio is read in the phone band
-FRAME_STEP = 2              # picture: every 2nd frame of a segment (24 of 48)
+FRAME_STEP = 2              # picture: every 2nd frame of a segment (25 of 50 at 25 fps)
 PROBE_SEGMENTS = 8          # read at each place a repeated passage matches, to find the true one
 QUICK_SEGMENTS = 240        # long leaks: an evenly spread first pass before reading everything
 PICTURE_WORKERS = min(6, os.cpu_count() or 2)
@@ -110,8 +110,9 @@ def _notice(meta: TitleMeta, loc: Location, leak_name: str) -> str:
 def _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_spec, lf, mf, box, has_leak_audio,
                      has_leak_video, state) -> np.ndarray:
     z = np.zeros(len(CARRIERS))
-    T = SEG_SECONDS
-    seg0 = i * T
+    g = meta.grid
+    T, FPS, SEG_FRAMES = g.seconds, float(g.fps), g.seg_frames
+    seg0 = float(g.time(i))
     residual, shift_at = 0.0, None
     real = meta.real_shifts(i)
     if has_leak_audio and meta.has_audio and real is not None:
@@ -120,19 +121,19 @@ def _measure_segment(i, meta, loc, key, leak_feat, mezz_feat, leak_spec, mezz_sp
         master_t = seg0 - MARGIN + tcar.FEAT_FFT / 2 / AUDIO_SR + hop * np.arange(n)
         mz = _interp_frames(mezz_feat, _feat_pos(master_t))
         lk = _interp_frames(leak_feat, _feat_pos(loc.clip_time(master_t)))
-        est, se = tcar.measure(lk, mz, real, MARGIN)
+        est, se = tcar.measure(lk, mz, real, MARGIN, T)
         z[0] = est / se if np.isfinite(se) else 0.0
-        e = tcar.shifts(lk, mz, MARGIN)
+        e = tcar.shifts(lk, mz, MARGIN, T)
         ok = ~np.isnan(e) & ~np.isnan(real).any(axis=0)
         if ok.sum() >= 2:
             residual = float(np.clip(np.median(e[ok] - real.mean(axis=0)[ok]), -0.06, 0.06))
-            shift_at = lambda t, c=tcar.CENTRES[ok], v=e[ok]: np.interp(t, c, v)  # noqa: E731
+            shift_at = lambda t, c=tcar.centres(T)[ok], v=e[ok]: np.interp(t, c, v)  # noqa: E731
         # audio carriers on the rendition timeline: leak where the rendition put it, master where the content is
         rho = acar.SPEC_WIN_S / 2 + acar.SPEC_HOP_S * np.arange(int(T / acar.SPEC_HOP_S) - 3)
         content = rho - (shift_at(rho) - residual if shift_at else 0.0)
         lk_spec = _interp_frames(leak_spec, _spec_pos(loc.clip_time(seg0 + rho + residual)))
         mz_spec = _interp_frames(mezz_spec, _spec_pos(seg0 + content))
-        got = acar.measure(lk_spec, mz_spec, key, meta.id, i)
+        got = acar.measure(lk_spec, mz_spec, key, meta.id, i, T)
         for name, (est, se) in got.items():
             z[CARRIERS.index(name)] = est / se if np.isfinite(se) else 0.0
 
@@ -178,8 +179,8 @@ def _read(leak: Path, meta: TitleMeta, loc: Location, key: bytes, segs: list[int
           has_audio: bool, has_video: bool, z_rows: dict, tick: Callable[[], None]) -> None:
     """Measure every carrier on the given segments of the leak, read at this location, into z_rows."""
     mezz = settings().data / "titles" / meta.id / "mezzanine.mp4"
-    lf = _Frames(media.frames(leak, WIDTH, HEIGHT, FPS)) if has_video else None
-    mf = _Frames(media.frames(mezz, WIDTH, HEIGHT, FPS)) if has_video else None
+    lf = _Frames(media.frames(leak, WIDTH, HEIGHT, meta.grid.fps)) if has_video else None
+    mf = _Frames(media.frames(mezz, WIDTH, HEIGHT, meta.grid.fps)) if has_video else None
     state: dict = {}
     pending: deque = deque()
     try:

@@ -126,3 +126,27 @@ def test_clip_partly_overlapping_a_repeat_is_still_located(rep80, tmp_path):
     assert r.location is not None, r.verdict
     assert r.location["offset"] == pytest.approx(35, abs=0.15)
     assert r.suspects[0]["viewer"] == LEAKER, r.suspects[:3]
+
+
+@pytest.fixture(scope="module")
+def ntsc150(lec150):
+    """The 150 s title as a 29.97 fps, 960x540, stereo source (another rate, size and channel count), packaged
+    into lec150's library."""
+    import os
+    from pathlib import Path
+    from leaktrace.ingest import ingest
+    data = Path(os.environ["LEAKTRACE_DATA"])
+    if not (data / "titles" / "ntsc150" / "meta.json").exists():
+        src = CACHE / "title_150s_ntsc.mp4"
+        if not src.exists():
+            media.run(["-i", CACHE / "title_150s.mp4", "-vf", "scale=960:540,fps=30000/1001", "-ac", "2", "-c:v",
+                       "libx264", "-preset", "veryfast", "-crf", "16", "-c:a", "aac", "-b:a", "192k", src])
+        ingest(src, "ntsc150", "NTSC sample", preset="veryfast")
+    return lec150
+
+
+@pytest.mark.slow
+def test_a_2997_fps_stereo_title_is_traced_to_its_viewer(ntsc150):
+    r = trace(deliver.export("ntsc150", LEAKER), ntsc150)
+    assert r.title["id"] == "ntsc150" and r.segments_used >= 70
+    assert r.verdict == "identified" and r.suspects[0]["viewer"] == LEAKER, (r.verdict, r.suspects[:3])

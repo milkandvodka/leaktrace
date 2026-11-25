@@ -4,17 +4,19 @@ from scipy.io import wavfile
 
 from leaktrace import media
 from leaktrace.carriers import audio
-from leaktrace.config import SEG_SAMPLES, SR
+from leaktrace.config import SR
+from leaktrace.grid import V1
 from leaktrace.synth import _babble
 
 KEY = bytes(range(32))
 M = 0.1
+SEG_SAMPLES, T = V1.samples(0), V1.seconds
 MS = int(M * SR)
 
 
-def _speech(seed):
+def _speech(seed, n=SEG_SAMPLES):
     x = _babble(np.random.default_rng(seed), ["one two three four five", "six seven eight", "nine ten eleven"])
-    return x[int(0.3 * SR): int(0.3 * SR) + SEG_SAMPLES + 2 * MS]
+    return x[int(0.3 * SR): int(0.3 * SR) + n + 2 * MS]
 
 
 @pytest.fixture(scope="module")
@@ -23,7 +25,7 @@ def speech():
 
 
 def _z(leak_seg, mezz_seg, key=KEY, sr_leak=SR):
-    got = audio.measure(audio.spec(leak_seg, sr_leak), audio.spec(mezz_seg, SR), key, "lec", 7)
+    got = audio.measure(audio.spec(leak_seg, sr_leak), audio.spec(mezz_seg, SR), key, "lec", 7, T)
     return {k: s / e for k, (s, e) in got.items()}
 
 
@@ -71,3 +73,19 @@ def test_snr_budget(speech):
     marked = audio.embed(speech, SR, M, KEY, "lec", 7, +1)
     seg = speech[MS:-MS]
     assert 10 * np.log10(np.sum(seg ** 2) / np.sum((marked - seg) ** 2)) > 20
+
+
+def test_a_2002_s_segment_is_marked_and_read_with_its_own_tiles():
+    sp = _speech(4, 96096)
+    marked = audio.embed(sp, SR, M, KEY, "lec", 7, -1)
+    assert len(marked) == 96096
+    got = audio.measure(audio.spec(marked, SR), audio.spec(sp[MS:-MS], SR), KEY, "lec", 7, 2.002)
+    for name, (s, e) in got.items():
+        assert s / e < -6, (name, s / e)
+
+
+def test_stereo_channels_carry_the_same_marks(speech):
+    y = audio.embed(np.stack([speech, 0.7 * speech], 1), SR, M, KEY, "lec", 7, +1)
+    assert y.shape == (SEG_SAMPLES, 2)
+    np.testing.assert_allclose(y[:, 0], audio.embed(speech, SR, M, KEY, "lec", 7, +1), atol=1e-9)
+    np.testing.assert_allclose(y[:, 1], 0.7 * y[:, 0], atol=1e-6)

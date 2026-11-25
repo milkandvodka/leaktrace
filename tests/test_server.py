@@ -40,7 +40,7 @@ def test_admin_requires_token(client):
     assert client.get("/api/titles", headers=ADMIN).status_code == 200
 
 
-def test_session_playlist_segments_and_view_log(client):
+def test_session_playlist_segments_and_view_log(client, packaged):
     assert client.post("/api/viewers", json={"viewers": [{"id": "s00042", "name": "Asha Rao"}]}, headers=ADMIN).status_code == 200
     r = client.post("/api/sessions", json={"title": "lec40", "viewer": "s00042"}, headers=ADMIN)
     assert r.status_code == 200
@@ -48,7 +48,7 @@ def test_session_playlist_segments_and_view_log(client):
     assert play.startswith("/play/") and r.json()["download"].startswith("/download/")  # relative: works behind a proxy
     text = client.get(play).text
     seg_urls = [l for l in text.splitlines() if "/s/" in l]
-    assert text.startswith("#EXTM3U") and len(seg_urls) == 21
+    assert text.startswith("#EXTM3U") and len(seg_urls) == packaged[1].n_segments == 20
     seg = client.get(seg_urls[0][seg_urls[0].index("/s/"):])
     assert seg.status_code == 200 and seg.content[:1] == b"\x47"  # MPEG-TS sync byte
     from leaktrace import server

@@ -9,12 +9,14 @@ import tempfile
 import threading
 import wave
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Iterator
 
 import numpy as np
 
-from .config import FPS, HEIGHT, SEG_FRAMES, SEG_SECONDS, SR, WIDTH, tool
+from .config import HEIGHT, SR, WIDTH, tool
+from .grid import snap_fps
 
 
 class MediaError(RuntimeError):
@@ -36,8 +38,9 @@ class Probe:
     has_video: bool
     width: int
     height: int
-    fps: float
+    rate: Fraction        # exact frame rate, snapped to a broadcast rate when close
     rotation: int
+    channels: int = 0
 
 
 def probe(path: Path) -> Probe:
@@ -48,18 +51,23 @@ def probe(path: Path) -> Probe:
     info = json.loads(r.stdout)
     streams = info.get("streams", [])
     v = next((s for s in streams if s["codec_type"] == "video" and not s.get("disposition", {}).get("attached_pic")), None)
-    rotation, fps = 0, 0.0
+    rotation, rate = 0, Fraction(0)
     if v:
         for sd in v.get("side_data_list", []):
             if "rotation" in sd:
                 rotation = int(round(float(sd["rotation"])))
         if not rotation and "rotate" in v.get("tags", {}):
             rotation = int(v["tags"]["rotate"])
-        num, den = (float(x) for x in v.get("avg_frame_rate", "0/1").split("/"))
-        fps = round(num / den, 3) if den else 0.0
+        for field in ("avg_frame_rate", "r_frame_rate"):
+            num, den = (int(x) for x in v.get(field, "0/1").split("/"))
+            if num and den:
+                rate = snap_fps(Fraction(num, den))
+                break
+    a = next((s for s in streams if s["codec_type"] == "audio"), None)
     return Probe(duration=float(info.get("format", {}).get("duration", 0) or 0),
                  has_audio=any(s["codec_type"] == "audio" for s in streams), has_video=v is not None,
-                 width=int(v["width"]) if v else 0, height=int(v["height"]) if v else 0, fps=fps, rotation=rotation)
+                 width=int(v["width"]) if v else 0, height=int(v["height"]) if v else 0, rate=rate, rotation=rotation,
+                 channels=int(a.get("channels", 1)) if a else 0)
 
 
 def content_box(path: Path, w: int = WIDTH, h: int = HEIGHT) -> tuple[int, int, int, int]:
@@ -76,7 +84,7 @@ def _fit(w: int, h: int, fps: float) -> str:
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p")
 
 
-def frames(path: Path, w: int = WIDTH, h: int = HEIGHT, fps: float = FPS, start: float = 0.0,
+def frames(path: Path, w: int, h: int, fps, start: float = 0.0,
            dur: float | None = None) -> Iterator[np.ndarray]:
     """YUV420 frames as (h * 3 / 2, w) uint8 arrays: Y rows, then U, then V. Rotation metadata is applied,
     the frame rate made constant, and the picture fitted inside w x h with black padding (never stretched)."""
@@ -117,21 +125,22 @@ def audio(path: Path, sr: int = SR, start: float = 0.0, dur: float | None = None
 
 
 class AudioReader:
-    """Mono float32 audio read front to back through one ffmpeg pipe (no whole-title buffer).
-    Gives silence when the file has no audio track, and zero-pads past the end."""
+    """float32 audio read front to back through one ffmpeg pipe (no whole-title buffer): (n,) for mono, (n, c)
+    with channels. Gives silence when the file has no audio track, and zero-pads past the end."""
 
-    def __init__(self, path: Path, sr: int = SR):
-        self._proc = None
+    def __init__(self, path: Path, sr: int = SR, channels: int = 1):
+        self._proc, self.c = None, max(1, channels)
         if probe(path).has_audio:
-            self._proc = subprocess.Popen([tool("ffmpeg"), "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1",
-                                           "-ar", str(sr), "-f", "f32le", "-"],
+            self._proc = subprocess.Popen([tool("ffmpeg"), "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac",
+                                           str(self.c), "-ar", str(sr), "-f", "f32le", "-"],
                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     def read(self, n: int) -> np.ndarray:
+        shape = (max(n, 0),) if self.c == 1 else (max(n, 0), self.c)
         if self._proc is None or n <= 0:
-            return np.zeros(max(n, 0), np.float32)
-        x = np.frombuffer(self._proc.stdout.read(4 * n), np.float32)
-        return np.pad(x, (0, n - len(x))) if len(x) < n else x.copy()
+            return np.zeros(shape, np.float32)
+        x = np.frombuffer(self._proc.stdout.read(4 * n * self.c), np.float32).reshape(-1, *shape[1:])
+        return np.pad(x, ((0, n - len(x)), *[(0, 0)] * (x.ndim - 1))) if len(x) < n else x.copy()
 
     def close(self) -> None:
         if self._proc:
@@ -142,30 +151,32 @@ class AudioReader:
 
 
 class Encoder:
-    """One rendition as HLS: 1.92 s TS segments named 00000.ts... and index.m3u8.
+    """One rendition as HLS: TS segments named 00000.ts... (one per grid segment) and index.m3u8.
 
-    Frames stream into x264 with an IDR frame forced every 48 frames and scene-cut detection off, so every
-    rendition of a title has its cuts in the same places. Audio goes to a WAV on disk and is muxed in when the
-    encoder closes; the video is stream-copied then, so the segment boundaries stay on those IDR frames.
+    Frames stream into x264 with an IDR frame forced at the start of every segment and scene-cut detection off,
+    so every rendition of a title has its cuts in the same places. Audio goes to a WAV on disk and is muxed in when
+    the encoder closes; the video is stream-copied then, so the segment boundaries stay on those IDR frames.
     """
 
-    def __init__(self, out_dir: Path, with_audio: bool = True, crf: int = 20, preset: str = "medium"):
+    def __init__(self, out_dir: Path, size: tuple[int, int], fps, seg_frames: int, channels: int = 1, crf: int = 20,
+                 preset: str = "medium"):
         self.dir = Path(out_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.with_audio = with_audio
+        self.with_audio, self.channels, self.seg_s = channels > 0, channels, float(seg_frames / Fraction(fps))
+        w, h = size
         self._video = self.dir / "_video.mkv"
         self._wav_path = self.dir / "_audio.wav"
         self._err = tempfile.TemporaryFile()
         self._proc = subprocess.Popen(
-            [tool("ffmpeg"), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{WIDTH}x{HEIGHT}",
-             "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
-             "-g", str(SEG_FRAMES), "-keyint_min", str(SEG_FRAMES), "-sc_threshold", "0",
-             "-force_key_frames", f"expr:eq(mod(n,{SEG_FRAMES}),0)", str(self._video)],
+            [tool("ffmpeg"), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{w}x{h}",
+             "-r", str(fps), "-i", "-", "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
+             "-g", str(seg_frames), "-keyint_min", str(seg_frames), "-sc_threshold", "0",
+             "-force_key_frames", f"expr:eq(mod(n,{seg_frames}),0)", str(self._video)],
             stdin=subprocess.PIPE, stderr=self._err)
         self._wav = None
-        if with_audio:
+        if self.with_audio:
             self._wav = wave.open(str(self._wav_path), "wb")
-            self._wav.setnchannels(1)
+            self._wav.setnchannels(channels)
             self._wav.setsampwidth(2)
             self._wav.setframerate(SR)
         # Frames go through a queue to a writer thread, so marking and both encoders run side by side instead of
@@ -204,9 +215,11 @@ class Encoder:
         if self._wav:
             self._wav.close()
         audio_in = ["-i", self._wav_path] if self.with_audio else []
-        audio_out = ["-map", "1:a", "-c:a", "aac", "-b:a", "96k", "-ar", SR, "-ac", 1] if self.with_audio else []
+        audio_out = ["-map", "1:a", "-c:a", "aac", "-b:a", f"{64 * self.channels}k", "-ar", SR,
+                     "-ac", self.channels] if self.with_audio else []
         run(["-i", self._video, *audio_in, "-map", "0:v", *audio_out, "-c:v", "copy", "-f", "hls",
-             "-hls_time", SEG_SECONDS, "-hls_playlist_type", "vod", "-hls_list_size", 0,
+             # -hls_time under a segment: a cut at every IDR frame, which is every segment start
+             "-hls_time", self.seg_s / 2, "-hls_playlist_type", "vod", "-hls_list_size", 0,
              "-hls_segment_filename", self.dir / "%05d.ts", self.dir / "index.m3u8"])
         self._video.unlink(missing_ok=True)
         self._wav_path.unlink(missing_ok=True)

@@ -4,7 +4,10 @@ import pytest
 
 from leaktrace import media
 from leaktrace.carriers import picture
-from leaktrace.config import HEIGHT, SEG_FRAMES, WIDTH
+from leaktrace.config import HEIGHT, WIDTH
+from leaktrace.grid import V1
+
+SEG_FRAMES = V1.seg_frames
 
 KEY = bytes(range(32))
 BOX = (0, 0, WIDTH, HEIGHT)
@@ -123,3 +126,20 @@ def test_letterbox_untouched(frames):
 def test_wrong_key_is_noise(frames):
     z = _z(_mark(frames, +1), frames, key=bytes(32))
     assert all(abs(z[n]) < 3.5 for n in ("brightness", "tint", "saturation", "hue", "contrast")), z
+
+
+def _resize(yuv, w, h, interp=cv2.INTER_AREA):
+    H, W = yuv.shape[0] * 2 // 3, yuv.shape[1]
+    planes = (yuv[:H], yuv[H: H + H // 4].reshape(H // 2, W // 2), yuv[H + H // 4:].reshape(H // 2, W // 2))
+    out = [cv2.resize(p, (w // (1 if i == 0 else 2), h // (1 if i == 0 else 2)), interpolation=interp)
+           for i, p in enumerate(planes)]
+    return np.concatenate([p.ravel() for p in out]).reshape(h * 3 // 2, w)
+
+
+def test_marked_at_1080p_reads_back_on_the_720p_analysis_canvas(frames):
+    big = [_resize(f, 1920, 1080, cv2.INTER_LINEAR) for f in frames]  # a 1080p title, marked at its own size
+    marked = [picture.embed(f, _t(i), (0, 0, 1920, 1080), KEY, "lec", 3, -1) for i, f in enumerate(big)]
+    z = _z([_resize(m, WIDTH, HEIGHT) for m in marked], [_resize(f, WIDTH, HEIGHT) for f in big])
+    for name in ("brightness", "tint", "contrast"):
+        assert z[name] < -6, (name, z[name])
+    assert np.abs(marked[20][:1080].astype(int) - big[20][:1080]).max() <= 2  # same luma budget at any size

@@ -13,7 +13,7 @@ from scipy.ndimage import maximum_filter
 
 from . import media
 from .carriers.picture import gray_small
-from .config import FP_SR, FPS, HEIGHT, SEG_FRAMES, WIDTH
+from .config import FP_SR, HEIGHT, WIDTH
 
 N_FFT, HOP = 512, 128
 FRAME_S = HOP / FP_SR  # 16 ms per landmark frame
@@ -22,7 +22,7 @@ PEAKS_PER_S = 25
 F_LO, F_HI = 8, 220  # bins: ~125 Hz to ~3.4 kHz, the band a phone keeps
 MOTION_W, MOTION_H = 80, 45
 THUMB_W, THUMB_H = 64, 36   # sequence-matching thumbnails for clips with no audio
-THUMB_FPS = 5               # one thumbnail every 0.2 s (every 5th frame at 25 fps)
+THUMB_FPS = 5               # one thumbnail every 0.2 s (the frame nearest each 0.2 s mark)
 
 
 def thumb(gray: np.ndarray) -> np.ndarray:
@@ -104,24 +104,27 @@ def motion(gray: np.ndarray, prev: np.ndarray | None) -> tuple[float, np.ndarray
 
 
 def build(folder: Path) -> None:
+    from .ingest import TitleMeta
     folder = Path(folder)
+    grid = TitleMeta.load(folder).grid
+    fps, n_seg = float(grid.fps), grid.seg_frames
     mezz = folder / "mezzanine.mp4"
     hashes, times = pairs(*peaks(media.audio(mezz, FP_SR)))
     order = np.argsort(hashes, kind="stable")
     np.savez_compressed(folder / "fp.npz", hashes=hashes[order], times=times[order])
 
     desc, seg_of, pts, moves, thumbs, prev = [], [], [], [], [], None
-    for n, f in enumerate(media.frames(mezz, WIDTH, HEIGHT, FPS)):
+    for n, f in enumerate(media.frames(mezz, WIDTH, HEIGHT, grid.fps)):
         gray = gray_small(f)
         mv, prev = motion(gray, prev)
         moves.append(mv)
-        if n % (FPS // THUMB_FPS) == 0:
+        if n == round(len(thumbs) * fps / THUMB_FPS):
             thumbs.append(thumb(gray))
-        if n % SEG_FRAMES == SEG_FRAMES // 2:
+        if n % n_seg == n_seg // 2:
             kp, d = orb().detectAndCompute(gray, None)
             if d is not None:
                 desc.append(d)
-                seg_of.append(np.full(len(d), n // SEG_FRAMES, np.int32))
+                seg_of.append(np.full(len(d), n // n_seg, np.int32))
                 pts.append(np.float32([k.pt for k in kp]))
     np.savez_compressed(folder / "kf.npz",
                         desc=np.concatenate(desc) if desc else np.zeros((0, 32), np.uint8),

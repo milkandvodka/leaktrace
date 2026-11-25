@@ -9,7 +9,7 @@ import random
 from pathlib import Path
 
 from .. import media
-from ..config import SEG_SECONDS
+from ..grid import segment_seconds
 from ..deliver import _variant
 from ..ingest import TitleMeta, title_dir
 
@@ -153,7 +153,7 @@ def collude_average(copies: list[Path], out_dir: Path) -> Path:
 def trim(src: Path, out_dir: Path, seconds: float, seed: int = 0) -> Path:
     """A random excerpt of `seconds` (re-encoded, the way it would be cut in an editor)."""
     dur = media.probe(src).duration
-    if seconds >= dur - SEG_SECONDS:
+    if seconds >= dur - segment_seconds():
         return Path(src)
     start = random.Random(seed).uniform(0, dur - seconds)
     out = _out(out_dir, src, f"cut{int(seconds)}", Path(src).suffix.lstrip("."))

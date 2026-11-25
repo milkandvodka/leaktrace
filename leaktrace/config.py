@@ -9,13 +9,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-# The segment grid: 48 frames at 25 fps = 92,160 samples at 48 kHz = 90 AAC frames, so video frames,
-# audio samples and AAC frames all end exactly on every segment boundary.
-FPS = 25
+# Each title has its own segment grid (grid.py). Audio is always 48 kHz. Tracing works on an analysis canvas:
+# the title fitted inside 1280x720 at its own frame rate.
 SR = 48_000
-SEG_FRAMES = 48
-SEG_SAMPLES = 92_160
-SEG_SECONDS = SEG_FRAMES / FPS
 WIDTH, HEIGHT = 1280, 720
 ANALYSIS_W, ANALYSIS_H = 320, 180  # picture carriers are low-frequency, so they're measured small
 FP_SR = 8_000  # landmark fingerprints and timing use phone-band audio, which survives an 8 kHz voice codec

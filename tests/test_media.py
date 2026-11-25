@@ -3,7 +3,10 @@ import subprocess
 import numpy as np
 
 from leaktrace import media
-from leaktrace.config import HEIGHT, SEG_FRAMES, SEG_SAMPLES, SR, WIDTH
+from leaktrace.config import HEIGHT, SR, WIDTH
+from leaktrace.grid import V1
+
+SEG_FRAMES, SEG_SAMPLES = V1.seg_frames, V1.samples(0)
 
 
 def test_frames_and_audio_roundtrip(title_40s):
@@ -19,13 +22,13 @@ def test_frames_and_audio_roundtrip(title_40s):
 
 def test_probe(title_40s):
     p = media.probe(title_40s)
-    assert p.has_audio and p.has_video and (p.width, p.height) == (1280, 720) and p.fps == 25 and p.rotation == 0
+    assert p.has_audio and p.has_video and (p.width, p.height) == (1280, 720) and p.rate == 25 and p.rotation == 0
     assert abs(p.duration - 40) < 0.1
 
 
 def test_encoder_makes_aligned_segments(tmp_path):
     rng = np.random.default_rng(0)
-    with media.Encoder(tmp_path / "A", with_audio=True) as enc:
+    with media.Encoder(tmp_path / "A", (WIDTH, HEIGHT), V1.fps, V1.seg_frames, channels=1) as enc:
         for i in range(4 * SEG_FRAMES):
             enc.write_frame(np.full((HEIGHT * 3 // 2, WIDTH), 60 + i % 100, np.uint8))
         enc.write_audio((0.1 * rng.standard_normal(4 * SEG_SAMPLES)).astype(np.float32))

@@ -12,7 +12,7 @@ import numpy as np
 
 from . import index, media
 from .carriers.picture import gray_small
-from .config import FP_SR, FPS, HEIGHT, SEG_SECONDS, WIDTH
+from .config import FP_SR, HEIGHT, WIDTH
 from .ingest import TitleMeta
 
 # A 0.02 grid from 0.75x to 2x, plus the speeds players actually offer; the best is then refined in 0.005 steps.
@@ -44,9 +44,9 @@ class Location:
 
 
 def _covered(meta: TitleMeta, offset: float, speed: float, duration: float) -> list[int]:
-    start, end = offset, offset + speed * duration
-    first = max(0, int(np.ceil(start / SEG_SECONDS - 1e-6)))
-    last = min(meta.marked_segments, int(np.floor(end / SEG_SECONDS + 1e-6)))
+    start, end, T = offset, offset + speed * duration, meta.grid.seconds
+    first = max(0, int(np.ceil(start / T - 1e-6)))
+    last = min(meta.marked_segments, int(np.floor(end / T + 1e-6)))
     return list(range(first, last))
 
 
@@ -189,15 +189,19 @@ def _by_video(leak: Path, titles: list[Path], duration: float):
         return None
     score, _standout, folder, rough, speed = best
     meta = TitleMeta.load(folder)
-    offset = _refine_by_motion(leak, index.get(folder)["motion"], rough, duration, search=3.0) if speed == 1.0 else rough
+    offset = (_refine_by_motion(leak, index.get(folder)["motion"], rough, duration, meta.grid.fps, search=3.0)
+              if speed == 1.0 else rough)
     return Location(meta.id, float(offset), float(speed), int(round(score * 100)), "video", duration,
                     _covered(meta, offset, speed, duration))
 
 
-def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, duration: float, search: float = 12.0) -> float:
-    """Slide the clip's frame-to-frame motion against the title's and take the best frame offset."""
+def _refine_by_motion(leak: Path, master_motion: np.ndarray, rough: float, duration: float, title_fps,
+                     search: float = 12.0) -> float:
+    """Slide the clip's frame-to-frame motion against the title's (per frame at the title's rate) and take the best
+    frame offset."""
+    FPS = float(title_fps)
     clip, prev = [], None
-    for n, f in enumerate(media.frames(leak, WIDTH, HEIGHT, FPS, dur=min(duration, 90.0))):
+    for n, f in enumerate(media.frames(leak, WIDTH, HEIGHT, title_fps, dur=min(duration, 90.0))):
         mv, prev = index.motion(f[:HEIGHT], prev)
         clip.append(mv)
     c = np.float32(clip[1:])

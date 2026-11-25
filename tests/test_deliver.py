@@ -49,6 +49,6 @@ def test_export_matches_playlist_segments(packaged):
     assert out.exists() and abs(media.probe(out).duration - meta.duration) < 0.15
     seg = deliver.resolve(_tokens(deliver.playlist("lec40", "s00007", ""))[1])
     a = next(media.frames(seg, WIDTH, HEIGHT, 25))
-    b = next(media.frames(out, WIDTH, HEIGHT, 25, start=1.92))
+    b = next(media.frames(out, WIDTH, HEIGHT, 25, start=meta.grid.seconds))
     assert np.abs(a.astype(int) - b.astype(int)).mean() < 0.5
     assert deliver.export("lec40", "s00007") == out  # cached
