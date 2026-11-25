@@ -51,10 +51,10 @@ export function Tour({ steps, onClose }: { steps: TourStep[]; onClose: () => voi
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="tour-title">
       {rect ? (
-        <div aria-hidden className="fixed rounded-2xl ring-2 ring-white/80 transition-all duration-300 pointer-events-none"
+        <div key="spot" aria-hidden className="fixed rounded-2xl ring-2 ring-white/80 transition-[top,left,width,height] duration-300 pointer-events-none"
           style={{ top: rect.top - PAD, left: rect.left - PAD, width: rect.width + 2 * PAD, height: rect.height + 2 * PAD,
             boxShadow: "0 0 0 9999px rgba(29, 20, 22, 0.55)" }} />
-      ) : <div aria-hidden className="fixed inset-0 bg-[rgba(29,20,22,0.55)]" />}
+      ) : <div key="dim" aria-hidden className="fixed inset-0 bg-[rgba(29,20,22,0.55)]" />}
       <div ref={box} className="fixed w-[min(340px,calc(100vw-32px))] card shadow-xl p-4 transition-[top,left] duration-300"
         style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: EDGE }}>
         <div className="flex items-start justify-between gap-3">
